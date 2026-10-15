@@ -60,7 +60,8 @@ th { background: #f5f5f5; font-weight: 600; }
 .alert { padding: 12px; border-radius: 6px; margin-bottom: 15px; font-size: 13px; }
 .alert-success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
 .alert-error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
-.alert-info { background: #d1ecf1; color: #0c5460; border: 1px solid #bee5eb; }
+ .alert-info { background: #d1ecf1; color: #0c5460; border: 1px solid #bee5eb; }
+.alert-warning { background: #fff3cd; color: #856404; border: 1px solid #ffeeba; }
 .toast { position: fixed; bottom: 20px; right: 20px; background: #333; color: white; padding: 12px 20px; border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); z-index: 10000; animation: slideIn 0.3s ease-out; max-width: 300px; }
 .toast.success { background: #4CAF50; }
 .toast.error { background: #f44336; }
@@ -1677,7 +1678,7 @@ function renderStudentResults() {
 }
 
 // ===================== SUPABASE STUDENT DATABASE =====================
-var studentDbState = { classes: [], assignedClasses: [], official: [], pending: [], requests: [], importRows: [], activeClassId: '', view: 'official', officialPanelMinimized: false, officialPanelClosed: false, draftRows: [], existingStudentSearchResults: [], selectedExistingStudentId: '', activeResubmissions: {}, activeChangeReviewRequestId: null, studentCorrectionRealtimeChannel: null, studentCorrectionRealtimeStarted: false, studentCorrectionRealtimeTimers: {} };
+var studentDbState = { classes: [], assignedClasses: [], official: [], pending: [], requests: [], importRows: [], activeClassId: '', view: 'official', officialPanelMinimized: false, officialPanelClosed: false, draftRows: [], existingStudentSearchResults: [], selectedExistingStudentId: '', activeResubmissions: {}, activeProvisioning: {}, activeChangeReviewRequestId: null, studentCorrectionRealtimeChannel: null, studentCorrectionRealtimeStarted: false, studentCorrectionRealtimeTimers: {} };
 
 function stopStudentCorrectionRealtime() {
   if (studentDbState.studentCorrectionRealtimeChannel && supabaseClient) {
@@ -2078,6 +2079,7 @@ function renderStudentDatabaseWorkspace() {
   if (studentDbState.view === 'corrections') html += renderCorrectionPanel();
   workspace.innerHTML = html;
   workspace.querySelectorAll('.student-db-tab').forEach(function(button) { button.addEventListener('click', function() { studentDbState.view = button.dataset.view; renderStudentDatabaseWorkspace(); }); });
+  bindOfficialStudentLoginEvents(workspace);
   bindStudentDatabaseEvents(workspace);
   bindExistingStudentEnrolmentEvents(workspace);
 }
@@ -2226,7 +2228,7 @@ function renderOfficialStudentCatalogue(isAdmin) {
   function renderOfficialDetails() {
     if (!studentDbState.activeClassId || studentDbState.officialPanelClosed) return '';
     var className = studentDbClassLabel(studentDbState.activeClassId);
-    var details = studentDbState.officialPanelMinimized ? '' : '<div class="student-class-details-body"><div class="input-group" style="margin:12px 0"><label for="studentDbSearch">Search Student (SID or name)</label><input id="studentDbSearch" type="search" placeholder="Search by SID or student name"></div><div style="overflow-x:auto"><table><thead><tr><th>S/N</th><th>SID</th><th>Student Name</th><th>Gender</th><th>Date of Birth</th><th>Guardian</th><th>Status</th>' + (!isAdmin ? '<th>Action</th>' : '') + '</tr></thead><tbody id="studentDbOfficialRows">' + renderOfficialStudentRows(isAdmin, '') + '</tbody></table></div></div>';
+    var details = studentDbState.officialPanelMinimized ? '' : '<div class="student-class-details-body"><div class="input-group" style="margin:12px 0"><label for="studentDbSearch">Search Student (SID or name)</label><input id="studentDbSearch" type="search" placeholder="Search by SID or student name"></div><div style="overflow-x:auto"><table><thead><tr><th>S/N</th><th>SID</th><th>Student Name</th><th>Gender</th><th>Date of Birth</th><th>Guardian</th><th>Status</th>' + (isAdmin ? '<th>Login Account</th>' : '<th>Action</th>') + '</tr></thead><tbody id="studentDbOfficialRows">' + renderOfficialStudentRows(isAdmin, '') + '</tbody></table></div></div>';
     return '<div class="student-class-details" style="grid-column:1/-1;margin-top:14px;padding:14px;border:1px solid #d9e1f2;border-radius:10px;background:#fff"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><h3>' + escapeManagementText(className) + ' — Official Students</h3><div><button type="button" class="btn btn-primary student-db-minimize-details">' + (studentDbState.officialPanelMinimized ? 'Expand' : 'Minimize') + '</button> <button type="button" class="btn btn-danger student-db-close-details">Close</button></div></div>' + details + '</div>';
   }
   function renderLevel(level) {
@@ -2262,8 +2264,231 @@ function renderOfficialStudentRows(isAdmin, query) {
   });
   return list.map(function(item, index) {
     var student = item.student, enrolment = item.enrolment;
-    return '<tr><td>' + (index + 1) + '</td><td>' + escapeManagementText(enrolment.sid || '—') + '</td><td>' + escapeManagementText(studentDbName(student)) + '</td><td>' + escapeManagementText(student.gender || '—') + '</td><td>' + escapeManagementText(studentDbDate(student.date_of_birth) || '—') + '</td><td>' + escapeManagementText(student.guardian_name || '—') + '<br><small>' + escapeManagementText(student.guardian_phone || '') + '</small></td><td>' + escapeManagementText(student.status || '—') + '</td>' + (!isAdmin ? '<td><button class="btn btn-primary student-correction-start" data-student="' + escapeManagementText(student.id) + '">Request Correction</button></td>' : '') + '</tr>';
-  }).join('') || '<tr><td colspan="8" style="color:#777">No official students enrolled in this class for the active session.</td></tr>';
+    return '<tr data-official-student-id="' + escapeManagementText(student.id) + '"><td>' + (index + 1) + '</td><td>' + escapeManagementText(enrolment.sid || '—') + '</td><td>' + escapeManagementText(studentDbName(student)) + '</td><td>' + escapeManagementText(student.gender || '—') + '</td><td>' + escapeManagementText(studentDbDate(student.date_of_birth) || '—') + '</td><td>' + escapeManagementText(student.guardian_name || '—') + '<br><small>' + escapeManagementText(student.guardian_phone || '') + '</small></td><td>' + escapeManagementText(student.status || '—') + '</td>' + (isAdmin ? '<td class="student-login-account-cell">' + renderOfficialStudentLoginAction(item) + '</td>' : '<td><button class="btn btn-primary student-correction-start" data-student="' + escapeManagementText(student.id) + '">Request Correction</button></td>') + '</tr>';
+  }).join('') || '<tr><td colspan="' + (isAdmin ? '8' : '8') + '" style="color:#777">No official students enrolled in this class for the active session.</td></tr>';
+}
+
+function renderOfficialStudentLoginAction(item) {
+  var student = item && item.student || {};
+  var status = String(student.login_status || '').toLowerCase();
+  var admission = String(student.admission_number || '').trim();
+  if (student.profile_id || status === 'created') return '<span style="color:#23753b;font-weight:600">Login Exists</span>';
+  if (String(student.status || '').toLowerCase() !== 'active') return '<span style="color:#777">Unavailable: student is not active</span>';
+  if (!admission || admission.length > 100 || /^PENDING-/i.test(admission)) return '<span style="color:#777">Unavailable: valid admission number required</span>';
+  if (!item.enrolment || !item.enrolment.id) return '<span style="color:#777">Unavailable: official enrolment required</span>';
+  if (status === 'pending') return '<span style="color:#856404">Account creation in progress</span>';
+  var isProvisioning = !!studentDbState.activeProvisioning[String(student.id)];
+  return '<button type="button" class="btn btn-primary provision-student-login" data-student-id="' + escapeManagementText(student.id) + '"' + (isProvisioning ? ' disabled' : '') + '>' + (isProvisioning ? 'Creating…' : 'Create Login') + '</button><div class="student-login-action-status" role="status" aria-live="polite" style="margin-top:5px"></div>';
+}
+
+function bindOfficialStudentLoginEvents(root) {
+  if (!root || !currentUser || currentUser.type !== 'admin') return;
+  root.querySelectorAll('.provision-student-login').forEach(function(button) {
+    button.addEventListener('click', function() {
+      provisionOfficialStudentLogin(button.getAttribute('data-student-id'), button);
+    });
+  });
+}
+
+function setOfficialStudentLoginStatus(studentId, message, type) {
+  var row = document.querySelector('tr[data-official-student-id="' + CSS.escape(String(studentId)) + '"]');
+  var status = row && row.querySelector('.student-login-action-status');
+  if (status) {
+    status.className = 'student-login-action-status' + (type ? ' alert alert-' + type : '');
+    status.textContent = message;
+  }
+}
+
+function refreshOfficialStudentRow(studentId) {
+  var search = document.getElementById('studentDbSearch');
+  var query = search ? search.value : '';
+  return loadOfficialStudents(studentDbState.activeClassId).then(function() {
+    renderStudentDatabaseWorkspace();
+    var refreshedSearch = document.getElementById('studentDbSearch');
+    if (refreshedSearch) {
+      refreshedSearch.value = query;
+      var rows = document.getElementById('studentDbOfficialRows');
+      if (rows) {
+        rows.innerHTML = renderOfficialStudentRows(currentUser.type === 'admin', query);
+        bindOfficialStudentLoginEvents(document.getElementById('studentDbWorkspace'));
+      }
+    }
+    return (studentDbState.official || []).find(function(entry) {
+      return String(entry.student && entry.student.id) === String(studentId);
+    }) || null;
+  });
+}
+
+function safeProvisioningError(error) {
+  var message = String(error && error.message || '').toLowerCase();
+  if (/fetch|network|failed to fetch|timeout|connection/.test(message)) return 'The connection was interrupted. The account status was refreshed; do not retry until you confirm whether a login was created.';
+  if (/invalid or expired|session.*expired|sign in as an administrator/.test(message)) return 'Your administrator session is missing or expired. Sign in again before creating a login.';
+  if (/only an active school administrator|administrator/.test(message)) return 'An active School Administrator account is required to create student logins.';
+  if (/already has a login|already.*created|profile_id/.test(message)) return 'This student already has a login or an account is already being processed. The student status was refreshed.';
+  if (/already in progress|being processed|already being/.test(message)) return 'Account creation is already in progress for this student. The student status was refreshed.';
+  if (/valid admission|active and have/.test(message)) return 'Login creation is unavailable because this student is inactive or does not have a valid admission number.';
+  if (/official enrolment|enrolment/.test(message)) return 'Login creation requires an official student enrolment.';
+  if (/student not found/.test(message)) return 'This student record could not be found in your school. Refresh the Student Database and check the selected class.';
+  return 'The server could not confirm successful account creation. The student status was refreshed; do not retry until you inspect it.';
+}
+
+async function provisionOfficialStudentLogin(studentId, button) {
+  if (!currentUser || currentUser.type !== 'admin') {
+    showToast('Only an Administrator can create student logins.', 'error');
+    return;
+  }
+  var entry = (studentDbState.official || []).find(function(item) {
+    return String(item.student && item.student.id) === String(studentId);
+  });
+  if (!entry || !entry.student || !entry.enrolment || !entry.enrolment.id) {
+    setOfficialStudentLoginStatus(studentId, 'Official student enrolment is unavailable. Refresh the class list before trying again.', 'error');
+    return;
+  }
+  var student = entry.student;
+  var admission = String(student.admission_number || '').trim();
+  var loginStatus = String(student.login_status || '').toLowerCase();
+  if (student.profile_id || loginStatus === 'created') {
+    setOfficialStudentLoginStatus(studentId, 'Login Exists', 'success');
+    return;
+  }
+  if (loginStatus === 'pending' || studentDbState.activeProvisioning[String(studentId)]) {
+    setOfficialStudentLoginStatus(studentId, 'Account creation is already in progress for this student.', 'info');
+    return;
+  }
+  if (String(student.status || '').toLowerCase() !== 'active') {
+    setOfficialStudentLoginStatus(studentId, 'Login creation is unavailable because the student is not active.', 'error');
+    return;
+  }
+  if (!admission || admission.length > 100 || /^PENDING-/i.test(admission)) {
+    setOfficialStudentLoginStatus(studentId, 'Login creation requires a valid admission number.', 'error');
+    return;
+  }
+  if (!supabaseClient || !authenticatedProfile || authenticatedProfile.role !== 'administrator' || authenticatedProfile.is_active !== true || !authenticatedProfile.school_id) {
+    setOfficialStudentLoginStatus(studentId, 'An active authenticated administrator session is required.', 'error');
+    return;
+  }
+
+  var key = String(studentId);
+  studentDbState.activeProvisioning[key] = true;
+  button.disabled = true;
+  button.textContent = 'Creating…';
+  setOfficialStudentLoginStatus(studentId, 'Verifying administrator session…', 'info');
+  var invocationStarted = false;
+  try {
+    var sessionResult = await supabaseClient.auth.getSession();
+    var session = sessionResult && sessionResult.data && sessionResult.data.session;
+    if (sessionResult.error || !session || !session.user || String(session.user.id) !== String(authenticatedProfile.id)) {
+      throw new Error('Your administrator session is missing or expired.');
+    }
+    var verifiedUser = await supabaseClient.auth.getUser();
+    if (verifiedUser.error || !verifiedUser.data || !verifiedUser.data.user || String(verifiedUser.data.user.id) !== String(authenticatedProfile.id)) {
+      throw new Error('Your administrator session is missing or expired.');
+    }
+
+    setOfficialStudentLoginStatus(studentId, 'Creating the student login securely…', 'info');
+    invocationStarted = true;
+    var result = await supabaseClient.functions.invoke('provision-student-account', {
+      body: { student_id: String(student.id) }
+    });
+    var response = result && result.data;
+    var confirmed = !result.error && response && response.success === true;
+    var serverErrorMessage = '';
+    if (result && result.error && result.error.context && typeof result.error.context.json === 'function') {
+      try {
+        var errorBody = await result.error.context.json();
+        if (errorBody && typeof errorBody.error === 'string') serverErrorMessage = errorBody.error;
+      } catch (responseError) {}
+    }
+    if (!confirmed) {
+      var refreshError = null;
+      try { entry = await refreshOfficialStudentRow(studentId); }
+      catch (error) { refreshError = error; }
+      var latestStudent = entry && entry.student;
+      if (latestStudent && (latestStudent.profile_id || String(latestStudent.login_status || '').toLowerCase() === 'created')) {
+        setOfficialStudentLoginStatus(studentId, 'A login now exists. The response did not confirm credentials; do not retry or assume a temporary password.', 'warning');
+        showToast('A student login may have been created, but its one-time credentials were not confirmed. Inspect the refreshed account status; do not retry.', 'error');
+      } else if (latestStudent && String(latestStudent.login_status || '').toLowerCase() === 'pending') {
+        setOfficialStudentLoginStatus(studentId, 'Account creation is pending on the server. Do not retry; refresh the Student Database and inspect the status.', 'warning');
+        showToast('Account creation is still being processed. Do not retry yet.', 'info');
+      } else {
+        var safeMessage = safeProvisioningError(new Error(serverErrorMessage || (response && response.error) || (result.error && result.error.message) || 'ambiguous response'));
+        if (refreshError) {
+          if (entry && entry.student) entry.student.login_status = 'pending';
+          safeMessage = 'The server response was not confirmed and the account status could not be refreshed. Do not retry; reload the Student Database and inspect the student status first.';
+        }
+        setOfficialStudentLoginStatus(studentId, safeMessage, 'error');
+        showToast(safeMessage, 'error');
+      }
+      return;
+    }
+
+    student.login_status = 'created';
+    try {
+      var refreshedEntry = await refreshOfficialStudentRow(studentId);
+      if (refreshedEntry && refreshedEntry.student && !refreshedEntry.student.profile_id) {
+        refreshedEntry.student.login_status = 'created';
+        var refreshedRow = document.querySelector('tr[data-official-student-id="' + CSS.escape(String(studentId)) + '"]');
+        var loginCell = refreshedRow && refreshedRow.querySelector('.student-login-account-cell');
+        if (loginCell) loginCell.innerHTML = renderOfficialStudentLoginAction(refreshedEntry);
+      }
+    } catch (refreshError) {
+      student.login_status = 'created';
+      renderStudentDatabaseWorkspace();
+    }
+    var tempPassword = typeof response.temporary_password === 'string' ? response.temporary_password : '';
+    if (tempPassword) {
+      showStudentDbDialog('Student Login Created', '<div class="alert alert-success"><strong>Server confirmed the student login was created.</strong></div><p><strong>Admission number (login ID):</strong> ' + escapeManagementText(response.admission_number || admission) + '</p><div class="input-group"><label for="provisionedTemporaryPassword">Temporary password — share privately</label><input id="provisionedTemporaryPassword" type="text" readonly value="' + escapeManagementText(tempPassword) + '" autocomplete="off"></div><button type="button" class="btn btn-primary" id="copyProvisionedPasswordBtn">Copy Temporary Password</button><p style="margin-top:12px;color:#8a4b08"><strong>Security:</strong> Share these credentials privately with the student. The student must change this temporary password immediately after first login.</p><div id="copyProvisionedPasswordStatus" role="status" aria-live="polite" style="margin-top:8px"></div>');
+      var dialog = document.getElementById('studentDbWorkflowDialog');
+      var copyButton = dialog && dialog.querySelector('#copyProvisionedPasswordBtn');
+      if (copyButton) copyButton.addEventListener('click', async function() {
+        var input = dialog.querySelector('#provisionedTemporaryPassword');
+        var copyStatus = dialog.querySelector('#copyProvisionedPasswordStatus');
+        try {
+          if (navigator.clipboard && window.isSecureContext) {
+            await navigator.clipboard.writeText(input.value);
+          } else {
+            input.focus(); input.select();
+            if (!document.execCommand('copy')) throw new Error('Clipboard copy was not available.');
+          }
+          copyStatus.className = 'alert alert-success';
+          copyStatus.textContent = 'Temporary password copied. Share it privately.';
+        } catch (copyError) {
+          input.focus(); input.select();
+          copyStatus.className = 'alert alert-info';
+          copyStatus.textContent = 'Automatic copy was unavailable. The password is selected; copy it manually and share it privately.';
+        }
+      });
+    } else {
+      showStudentDbDialog('Student Login Created', '<p class="alert alert-success">The server confirmed that the student login was created, but did not return its temporary password. Do not retry provisioning. Contact the system administrator to resolve the credential delivery safely.</p><p><strong>Admission number (login ID):</strong> ' + escapeManagementText(response.admission_number || admission) + '</p><p>The student account is configured to require a password change at first login.</p>');
+    }
+    showToast('Student login created successfully.', 'success');
+  } catch (error) {
+    var refreshed = null;
+    try { refreshed = await refreshOfficialStudentRow(studentId); } catch (refreshError) {}
+    var latest = refreshed && refreshed.student;
+    var latestHasLogin = latest && (latest.profile_id || String(latest.login_status || '').toLowerCase() === 'created');
+    var latestIsPending = latest && String(latest.login_status || '').toLowerCase() === 'pending';
+    var message = latestHasLogin
+      ? 'A login now exists. The request outcome was uncertain, so no credentials are shown and provisioning was not retried.'
+      : (invocationStarted && refreshError
+        ? 'The server response was not confirmed and the account status could not be refreshed. Do not retry; reload the Student Database and inspect the student status first.'
+        : (latestIsPending
+          ? 'Account creation is pending on the server. Do not retry; refresh the Student Database and inspect the status.'
+          : safeProvisioningError(error)));
+    if (invocationStarted && refreshError && entry && entry.student) entry.student.login_status = 'pending';
+    setOfficialStudentLoginStatus(studentId, message, latestHasLogin || latestIsPending || (invocationStarted && refreshError) ? 'warning' : 'error');
+    showToast(message, 'error');
+  } finally {
+    delete studentDbState.activeProvisioning[key];
+    var currentRow = document.querySelector('tr[data-official-student-id="' + CSS.escape(key) + '"]');
+    var currentButton = currentRow && currentRow.querySelector('.provision-student-login');
+    if (currentButton) {
+      var latestEntry = (studentDbState.official || []).find(function(item) { return String(item.student && item.student.id) === key; });
+      var statusNeedsReview = latestEntry && String(latestEntry.student.login_status || '').toLowerCase() === 'pending';
+      currentButton.disabled = !!statusNeedsReview;
+      currentButton.textContent = statusNeedsReview ? 'Status Check Required' : 'Create Login';
+    }
+  }
 }
 
 function renderStudentSubmitPanel() {
@@ -3222,7 +3447,10 @@ function bindStudentDatabaseEvents(root) {
   var search = root.querySelector('#studentDbSearch');
   if (search) search.addEventListener('input', function() {
     var rows = root.querySelector('#studentDbOfficialRows');
-    if (rows) rows.innerHTML = renderOfficialStudentRows(currentUser.type === 'admin', this.value);
+    if (rows) {
+      rows.innerHTML = renderOfficialStudentRows(currentUser.type === 'admin', this.value);
+      bindOfficialStudentLoginEvents(root);
+    }
   });
   root.querySelectorAll('input[name="studentSubmitMode"]').forEach(function(input) { input.addEventListener('change', function() {
     root.querySelector('#studentManualFields').classList.toggle('hidden', this.value !== 'manual');
