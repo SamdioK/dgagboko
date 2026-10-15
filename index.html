@@ -1678,7 +1678,7 @@ function renderStudentResults() {
 }
 
 // ===================== SUPABASE STUDENT DATABASE =====================
-var studentDbState = { classes: [], assignedClasses: [], official: [], pending: [], requests: [], importRows: [], activeClassId: '', view: 'official', officialPanelMinimized: false, officialPanelClosed: false, draftRows: [], existingStudentSearchResults: [], selectedExistingStudentId: '', activeResubmissions: {}, activeProvisioning: {}, activeChangeReviewRequestId: null, studentCorrectionRealtimeChannel: null, studentCorrectionRealtimeStarted: false, studentCorrectionRealtimeTimers: {} };
+var studentDbState = { classes: [], assignedClasses: [], official: [], pending: [], requests: [], importRows: [], activeClassId: '', view: 'official', officialPanelMinimized: false, officialPanelClosed: false, draftRows: [], existingStudentSearchResults: [], selectedExistingStudentId: '', activeResubmissions: {}, activeProvisioning: {}, activePasswordResets: {}, activeChangeReviewRequestId: null, studentCorrectionRealtimeChannel: null, studentCorrectionRealtimeStarted: false, studentCorrectionRealtimeTimers: {} };
 
 function stopStudentCorrectionRealtime() {
   if (studentDbState.studentCorrectionRealtimeChannel && supabaseClient) {
@@ -2272,7 +2272,13 @@ function renderOfficialStudentLoginAction(item) {
   var student = item && item.student || {};
   var status = String(student.login_status || '').toLowerCase();
   var admission = String(student.admission_number || '').trim();
-  if (student.profile_id || status === 'created') return '<span style="color:#23753b;font-weight:600">Login Exists</span>';
+  if (student.profile_id || status === 'created') {
+    var canResetPassword = currentUser && currentUser.type === 'admin' && student.profile_id && status === 'created' &&
+      String(student.status || '').toLowerCase() === 'active' && item.enrolment && item.enrolment.id;
+    return '<span style="color:#23753b;font-weight:600">Login Exists</span>' + (canResetPassword
+      ? '<div style="margin-top:5px"><button type="button" class="btn btn-primary reset-student-password" data-student-id="' + escapeManagementText(student.id) + '">Reset Password</button><div class="student-password-reset-status" role="status" aria-live="polite" style="margin-top:5px"></div></div>'
+      : '');
+  }
   if (String(student.status || '').toLowerCase() !== 'active') return '<span style="color:#777">Unavailable: student is not active</span>';
   if (!admission || admission.length > 100 || /^PENDING-/i.test(admission)) return '<span style="color:#777">Unavailable: valid admission number required</span>';
   if (!item.enrolment || !item.enrolment.id) return '<span style="color:#777">Unavailable: official enrolment required</span>';
@@ -2284,8 +2290,17 @@ function renderOfficialStudentLoginAction(item) {
 function bindOfficialStudentLoginEvents(root) {
   if (!root || !currentUser || currentUser.type !== 'admin') return;
   root.querySelectorAll('.provision-student-login').forEach(function(button) {
+    if (button.dataset.provisionBound === 'true') return;
+    button.dataset.provisionBound = 'true';
     button.addEventListener('click', function() {
       provisionOfficialStudentLogin(button.getAttribute('data-student-id'), button);
+    });
+  });
+  root.querySelectorAll('.reset-student-password').forEach(function(button) {
+    if (button.dataset.passwordResetBound === 'true') return;
+    button.dataset.passwordResetBound = 'true';
+    button.addEventListener('click', function() {
+      resetOfficialStudentPassword(button.getAttribute('data-student-id'), button);
     });
   });
 }
@@ -2296,6 +2311,136 @@ function setOfficialStudentLoginStatus(studentId, message, type) {
   if (status) {
     status.className = 'student-login-action-status' + (type ? ' alert alert-' + type : '');
     status.textContent = message;
+  }
+}
+
+function setOfficialStudentPasswordResetStatus(studentId, message, type) {
+  var row = document.querySelector('tr[data-official-student-id="' + CSS.escape(String(studentId)) + '"]');
+  var status = row && row.querySelector('.student-password-reset-status');
+  if (status) {
+    status.className = 'student-password-reset-status' + (type ? ' alert alert-' + type : '');
+    status.textContent = message;
+  }
+}
+
+async function resetOfficialStudentPassword(studentId, button) {
+  var key = '';
+  var operationId = '';
+  var sessionStore = null;
+  var invocationStarted = false;
+  var lockKey = String(studentId);
+  var unavailableMessage = 'Reset outcome could not be confirmed. Do not start a new reset. This button reuses the same operation ID for this reset; an unresolved operation may require the Portal Developer to reconcile it.';
+  if (!currentUser || currentUser.type !== 'admin' || !authenticatedProfile ||
+      authenticatedProfile.role !== 'administrator' || authenticatedProfile.is_active !== true || !authenticatedProfile.school_id) {
+    setOfficialStudentPasswordResetStatus(studentId, 'An active authenticated School Administrator session is required.', 'error');
+    return;
+  }
+  if (studentDbState.activePasswordResets[lockKey]) return;
+  var entry = (studentDbState.official || []).find(function(item) {
+    return String(item.student && item.student.id) === lockKey;
+  });
+  if (!entry || !entry.student || String(entry.student.status || '').toLowerCase() !== 'active' ||
+      !entry.student.profile_id || String(entry.student.login_status || '').toLowerCase() !== 'created' ||
+      !entry.enrolment || !entry.enrolment.id ||
+      (entry.student.school_id && String(entry.student.school_id) !== String(authenticatedProfile.school_id))) {
+    setOfficialStudentPasswordResetStatus(studentId, 'Password reset requires an active student, a verified existing login, and an official enrolment. Refresh the Student Database and check the record.', 'error');
+    return;
+  }
+  var admission = String(entry.student.admission_number || '').trim();
+  if (!admission || admission.length > 100 || /^PENDING-/i.test(admission)) {
+    setOfficialStudentPasswordResetStatus(studentId, 'Password reset requires a valid admission number. Update the student record before retrying.', 'error');
+    return;
+  }
+  if (!supabaseClient) {
+    setOfficialStudentPasswordResetStatus(studentId, 'Supabase is unavailable. No reset was started.', 'error');
+    return;
+  }
+  try {
+    sessionStore = window.sessionStorage;
+    if (!sessionStore) throw new Error('Session storage is unavailable.');
+  } catch (storageError) {
+    setOfficialStudentPasswordResetStatus(studentId, 'Session storage is unavailable. No reset was started.', 'error');
+    return;
+  }
+
+  studentDbState.activePasswordResets[lockKey] = true;
+  if (button) { button.disabled = true; button.textContent = 'Resetting…'; }
+  setOfficialStudentPasswordResetStatus(studentId, 'Verifying administrator session…', 'info');
+  try {
+    var sessionResult = await supabaseClient.auth.getSession();
+    var session = sessionResult && sessionResult.data && sessionResult.data.session;
+    if (sessionResult.error || !session || !session.user || String(session.user.id) !== String(authenticatedProfile.id)) {
+      throw new Error('The administrator session is missing, expired, or belongs to a different account.');
+    }
+    var userResult = await supabaseClient.auth.getUser();
+    if (userResult.error || !userResult.data || !userResult.data.user || String(userResult.data.user.id) !== String(authenticatedProfile.id)) {
+      throw new Error('The administrator account could not be verified.');
+    }
+
+    key = 'studentPasswordReset:' + JSON.stringify([String(authenticatedProfile.school_id), String(authenticatedProfile.id), lockKey]);
+    try {
+      operationId = sessionStore.getItem(key) || '';
+      if (!operationId) {
+        if (!window.isSecureContext || !window.crypto || typeof window.crypto.randomUUID !== 'function') {
+          throw new Error('A secure HTTPS context with crypto.randomUUID() is required to start a password reset.');
+        }
+        operationId = window.crypto.randomUUID();
+        sessionStore.setItem(key, operationId);
+        if (sessionStore.getItem(key) !== operationId) throw new Error('The reset operation ID could not be safely retained in this browser session.');
+      }
+    } catch (storageError) {
+      throw new Error(storageError && storageError.message ? storageError.message : 'Session storage is unavailable. No reset was started.');
+    }
+
+    setOfficialStudentPasswordResetStatus(studentId, 'Requesting the password reset securely…', 'info');
+    invocationStarted = true;
+    var result = await supabaseClient.functions.invoke('reset-student-password', {
+      body: { student_id: String(entry.student.id), operation_id: operationId }
+    });
+    var response = result && result.data;
+    var confirmed = !result.error && response && response.success === true &&
+      String(response.operation_id || '') === operationId &&
+      typeof response.temporary_password === 'string' && response.temporary_password.trim().length > 0 &&
+      typeof response.admission_number === 'string' && response.admission_number.trim().length > 0;
+    if (!confirmed) {
+      setOfficialStudentPasswordResetStatus(studentId, unavailableMessage + (result.error ? ' ' + (result.error.message || '') : ''), 'warning');
+      return;
+    }
+
+    setOfficialStudentPasswordResetStatus(studentId, 'Password reset confirmed. The temporary password is shown in the private dialog; record it before closing.', 'success');
+    var dialog = showStudentDbDialog('Student Password Reset',
+      '<p class="alert alert-success"><strong>Password reset confirmed.</strong></p>' +
+      '<p><strong>Admission number (login ID):</strong> ' + escapeManagementText(response.admission_number) + '</p>' +
+      '<div class="input-group"><label for="resetTemporaryPassword">Temporary password — share privately</label><input id="resetTemporaryPassword" type="text" readonly autocomplete="off" value="' + escapeManagementText(response.temporary_password) + '"></div>' +
+      '<p style="margin:10px 0;color:#8a4b08"><strong>Security:</strong> Share this password privately. The student must change it at their next login.</p>' +
+      '<div id="passwordResetRecordStatus" role="status" aria-live="polite"></div>' +
+      '<button type="button" class="btn btn-success" id="confirmPasswordRecordedBtn">I have safely recorded the password</button>');
+    dialog.querySelector('#confirmPasswordRecordedBtn').addEventListener('click', function() {
+      var status = dialog.querySelector('#passwordResetRecordStatus');
+      try {
+        sessionStore.removeItem(key);
+        if (sessionStore.getItem(key) !== null) throw new Error('The operation ID is still stored.');
+        status.className = 'alert alert-success';
+        status.textContent = 'Confirmation recorded. The saved reset operation ID was cleared.';
+        setOfficialStudentPasswordResetStatus(studentId, 'Password reset recorded by the administrator.', 'success');
+        this.disabled = true;
+      } catch (clearError) {
+        status.className = 'alert alert-error';
+        status.textContent = 'Could not clear the saved operation ID. Keep it stored and contact the Portal Developer before starting another reset.';
+      }
+    });
+  } catch (error) {
+    var detail = error && error.message ? ' ' + error.message : '';
+    var message = invocationStarted
+      ? unavailableMessage + detail
+      : (error && error.message ? error.message + ' No reset request was sent.' : 'No reset was started. Check the secure session and try again.');
+    setOfficialStudentPasswordResetStatus(studentId, message, invocationStarted ? 'warning' : 'error');
+  } finally {
+    delete studentDbState.activePasswordResets[lockKey];
+    if (button) {
+      button.disabled = false;
+      button.textContent = 'Reset Password';
+    }
   }
 }
 
