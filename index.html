@@ -2325,11 +2325,12 @@ function setOfficialStudentPasswordResetStatus(studentId, message, type) {
 
 async function resetOfficialStudentPassword(studentId, button) {
   var key = '';
+  var stateKey = '';
   var operationId = '';
   var sessionStore = null;
   var invocationStarted = false;
   var lockKey = String(studentId);
-  var unavailableMessage = 'Reset outcome could not be confirmed. Do not start a new reset. This button reuses the same operation ID for this reset; an unresolved operation may require the Portal Developer to reconcile it.';
+  var unavailableMessage = 'Reset outcome could not be confirmed. Do not start a new reset. An unresolved operation may require the Portal Developer to reconcile it.';
   if (!currentUser || currentUser.type !== 'admin' || !authenticatedProfile ||
       authenticatedProfile.role !== 'administrator' || authenticatedProfile.is_active !== true || !authenticatedProfile.school_id) {
     setOfficialStudentPasswordResetStatus(studentId, 'An active authenticated School Administrator session is required.', 'error');
@@ -2378,9 +2379,19 @@ async function resetOfficialStudentPassword(studentId, button) {
     }
 
     key = 'studentPasswordReset:' + JSON.stringify([String(authenticatedProfile.school_id), String(authenticatedProfile.id), lockKey]);
+    stateKey = key + ':state';
+    var operationState = null;
+    var retryAuthorized = false;
     try {
       operationId = sessionStore.getItem(key) || '';
-      if (!operationId) {
+      if (operationId) {
+        try { operationState = JSON.parse(sessionStore.getItem(stateKey) || 'null'); } catch (stateError) { operationState = null; }
+        retryAuthorized = !!(operationState && operationState.operation_id === operationId && operationState.retry_same_operation === true);
+        if (!retryAuthorized) {
+          setOfficialStudentPasswordResetStatus(studentId, 'A previous reset request has an unresolved outcome. No second reset was sent. Contact the Portal Developer to reconcile this operation before starting another reset.', 'warning');
+          return;
+        }
+      } else {
         if (!window.isSecureContext || !window.crypto || typeof window.crypto.randomUUID !== 'function') {
           throw new Error('A secure HTTPS context with crypto.randomUUID() is required to start a password reset.');
         }
@@ -2388,25 +2399,46 @@ async function resetOfficialStudentPassword(studentId, button) {
         sessionStore.setItem(key, operationId);
         if (sessionStore.getItem(key) !== operationId) throw new Error('The reset operation ID could not be safely retained in this browser session.');
       }
+      operationState = { operation_id: operationId, status: 'request_started', retry_same_operation: false };
+      sessionStore.setItem(stateKey, JSON.stringify(operationState));
+      if (sessionStore.getItem(stateKey) !== JSON.stringify(operationState)) throw new Error('The reset status could not be safely retained in this browser session.');
     } catch (storageError) {
       throw new Error(storageError && storageError.message ? storageError.message : 'Session storage is unavailable. No reset was started.');
     }
 
-    setOfficialStudentPasswordResetStatus(studentId, 'Requesting the password reset securely…', 'info');
+    setOfficialStudentPasswordResetStatus(studentId, retryAuthorized ? 'Retrying the same reset operation securely…' : 'Requesting the password reset securely…', 'info');
     invocationStarted = true;
     var result = await supabaseClient.functions.invoke('reset-student-password', {
       body: { student_id: String(entry.student.id), operation_id: operationId }
     });
     var response = result && result.data;
-    var confirmed = !result.error && response && response.success === true &&
-      String(response.operation_id || '') === operationId &&
+    if (result && result.error && result.error.context && typeof result.error.context.json === 'function') {
+      try {
+        var functionResponse = await result.error.context.json();
+        if (functionResponse && typeof functionResponse === 'object') response = functionResponse;
+      } catch (responseError) {}
+    }
+    var responseOperationId = response && response.operation_id;
+    var operationMatches = !responseOperationId || String(responseOperationId) === operationId;
+    var confirmed = !result.error && response && response.success === true && operationMatches &&
+      (!response.status || response.status === 'completed') &&
       typeof response.temporary_password === 'string' && response.temporary_password.trim().length > 0 &&
       typeof response.admission_number === 'string' && response.admission_number.trim().length > 0;
     if (!confirmed) {
-      setOfficialStudentPasswordResetStatus(studentId, unavailableMessage + (result.error ? ' ' + (result.error.message || '') : ''), 'warning');
+      var explicitlyRetryable = !!(response && String(response.operation_id || '') === operationId &&
+        response.retry_with_same_operation_id === true &&
+        ['in_progress', 'outcome_uncertain'].indexOf(String(response.status || '')) !== -1);
+      operationState = { operation_id: operationId, status: explicitlyRetryable ? response.status : 'outcome_uncertain', retry_same_operation: explicitlyRetryable };
+      try { sessionStore.setItem(stateKey, JSON.stringify(operationState)); } catch (stateSaveError) {}
+      var responseMessage = response && response.message ? ' ' + response.message : '';
+      setOfficialStudentPasswordResetStatus(studentId, explicitlyRetryable
+        ? 'The server confirmed this same operation may be retried safely. Retry only with the existing button and operation ID.' + responseMessage
+        : unavailableMessage + responseMessage + (result.error ? ' ' + (result.error.message || '') : ''), 'warning');
       return;
     }
 
+    operationState = { operation_id: operationId, status: 'completed_credentials_shown', retry_same_operation: false };
+    try { sessionStore.setItem(stateKey, JSON.stringify(operationState)); } catch (stateSaveError) {}
     setOfficialStudentPasswordResetStatus(studentId, 'Password reset confirmed. The temporary password is shown in the private dialog; record it before closing.', 'success');
     var dialog = showStudentDbDialog('Student Password Reset',
       '<p class="alert alert-success"><strong>Password reset confirmed.</strong></p>' +
@@ -2419,7 +2451,8 @@ async function resetOfficialStudentPassword(studentId, button) {
       var status = dialog.querySelector('#passwordResetRecordStatus');
       try {
         sessionStore.removeItem(key);
-        if (sessionStore.getItem(key) !== null) throw new Error('The operation ID is still stored.');
+        sessionStore.removeItem(stateKey);
+        if (sessionStore.getItem(key) !== null || sessionStore.getItem(stateKey) !== null) throw new Error('The reset operation record is still stored.');
         status.className = 'alert alert-success';
         status.textContent = 'Confirmation recorded. The saved reset operation ID was cleared.';
         setOfficialStudentPasswordResetStatus(studentId, 'Password reset recorded by the administrator.', 'success');
@@ -2431,6 +2464,10 @@ async function resetOfficialStudentPassword(studentId, button) {
     });
   } catch (error) {
     var detail = error && error.message ? ' ' + error.message : '';
+    if (invocationStarted && sessionStore && stateKey && operationId) {
+      operationState = { operation_id: operationId, status: 'outcome_uncertain', retry_same_operation: false };
+      try { sessionStore.setItem(stateKey, JSON.stringify(operationState)); } catch (stateSaveError) {}
+    }
     var message = invocationStarted
       ? unavailableMessage + detail
       : (error && error.message ? error.message + ' No reset request was sent.' : 'No reset was started. Check the secure session and try again.');
