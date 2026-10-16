@@ -2419,7 +2419,7 @@ async function resetOfficialStudentPassword(studentId, button) {
       } catch (responseError) {}
     }
     var responseOperationId = response && response.operation_id;
-    var operationMatches = !responseOperationId || String(responseOperationId) === operationId;
+    var operationMatches = String(responseOperationId || '') === operationId;
     var confirmed = !result.error && response && response.success === true && operationMatches &&
       (!response.status || response.status === 'completed') &&
       typeof response.temporary_password === 'string' && response.temporary_password.trim().length > 0 &&
