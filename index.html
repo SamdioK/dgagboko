@@ -787,7 +787,7 @@ async function handleStudentPasswordChange() {
   var statusElement = document.getElementById('studentPasswordChangeError');
   var passwordInput = document.getElementById('studentNewPassword');
   var confirmInput = document.getElementById('studentConfirmNewPassword');
-  var password = passwordInput.value;
+  var newPassword = passwordInput.value;
   var confirmation = confirmInput.value;
   statusElement.classList.add('hidden');
   var changingFormMasterPassword = formMasterPasswordChangePending;
@@ -799,12 +799,12 @@ async function handleStudentPasswordChange() {
     statusElement.classList.remove('hidden');
     return;
   }
-  if (!validateStudentNewPassword(password)) {
+  if (!validateStudentNewPassword(newPassword)) {
     statusElement.textContent = 'Use 12–128 characters and include uppercase and lowercase letters, a number, and a special character.';
     statusElement.classList.remove('hidden');
     return;
   }
-  if (password !== confirmation) {
+  if (newPassword !== confirmation) {
     statusElement.textContent = 'The new password and confirmation do not match.';
     statusElement.classList.remove('hidden');
     return;
@@ -818,10 +818,13 @@ async function handleStudentPasswordChange() {
         String(sessionResult.data.session.user.id) !== String(authenticatedProfile.id)) {
       throw new Error('Your student session has expired. Sign in again before changing your password.');
     }
-    var passwordChangeFunction = changingFormMasterPassword ? 'change-form-master-password' : 'change-student-password';
-    var result = await supabaseClient.functions.invoke(passwordChangeFunction, {
-      body: { new_password: password }
-    });
+    var result = changingFormMasterPassword
+      ? await supabaseClient.functions.invoke('change-form-master-password', {
+          body: { new_password: newPassword }
+        })
+      : await supabaseClient.functions.invoke('change-student-password', {
+          body: { new_password: newPassword }
+        });
     if (result.error) {
       var functionMessage = result.error.message || 'The password could not be updated.';
       if (result.error.context && typeof result.error.context.json === 'function') {
