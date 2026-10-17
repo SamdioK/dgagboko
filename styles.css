@@ -1,10 +1,10 @@
 
 /* ==========================================
    DE-GLOBAL ACADEMY GBOKO E-RESULT SYSTEM
-   Responsive stylesheet
+   COMPLETE RESPONSIVE STYLESHEET
    ========================================== */
 
-/* Global sizing */
+/* Global sizing and overflow protection */
 *,
 *::before,
 *::after {
@@ -27,12 +27,12 @@ body {
     overflow-x: hidden;
 }
 
-/* Existing title styling */
+/* Original title styling */
 .title {
     color: #5C6AC4;
 }
 
-/* Keep common content within the screen */
+/* Keep media within the available screen width */
 img,
 video,
 canvas,
@@ -47,14 +47,234 @@ button {
     max-width: 100%;
 }
 
-/* Responsive tables */
-table {
+/* General responsive layout */
+.app-container {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    overflow-x: clip;
+}
+
+.header,
+.tabs {
+    width: 100%;
     max-width: 100%;
 }
+
+.header-content,
+.tabs-content,
+.main-content {
+    width: 100%;
+    max-width: 1400px;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+.header-content,
+.main-content,
+.card,
+.student-class-picker,
+.student-class-picker-groups,
+.student-class-picker-group,
+.student-class-level,
+.student-class-arms {
+    min-width: 0;
+    max-width: 100%;
+}
+
+/* ==========================================
+   RESPONSIVE NAVIGATION SCROLL CONTROLS
+   ========================================== */
+
+.tabs {
+    position: relative;
+    display: flex;
+    align-items: stretch;
+    overflow: hidden;
+}
+
+/* Scrollable navigation viewport */
+.tabs-viewport {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scroll-behavior: smooth;
+    scrollbar-width: thin;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+}
+
+.tabs-viewport::-webkit-scrollbar {
+    height: 4px;
+}
+
+.tabs-viewport::-webkit-scrollbar-thumb {
+    background: #c3c9dc;
+    border-radius: 4px;
+}
+
+/* Navigation items */
+.tabs-viewport .tabs-content {
+    display: flex;
+    width: max-content;
+    min-width: 100%;
+}
+
+.tabs-viewport .tab,
+.tab {
+    flex: 0 0 auto;
+    white-space: nowrap;
+}
+
+/* Left and right navigation buttons */
+.tab-scroll-arrow {
+    display: none;
+    flex: 0 0 34px;
+    align-items: center;
+    justify-content: center;
+    align-self: stretch;
+    border: none;
+    border-radius: 5px;
+    background: #eef0ff;
+    color: #3445a1;
+    font-size: 26px;
+    line-height: 1;
+    cursor: pointer;
+    z-index: 2;
+}
+
+.tab-scroll-arrow.visible {
+    display: flex;
+}
+
+.tab-scroll-arrow:hover {
+    background: #dfe4ff;
+}
+
+.tab-scroll-arrow:focus-visible {
+    outline: 2px solid #536bd8;
+    outline-offset: -2px;
+}
+
+/* ==========================================
+   CLASS AND ARM SELECTORS
+   ========================================== */
+
+.student-class-picker {
+    margin: 14px 0 20px;
+}
+
+.student-class-picker-groups {
+    display: grid;
+    gap: 18px;
+}
+
+.student-class-picker-group {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+}
+
+.student-class-level,
+.student-class-arms {
+    min-width: 0;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+}
+
+.student-class-arm {
+    max-width: 100%;
+    overflow-wrap: anywhere;
+}
+
+/* ==========================================
+   RESPONSIVE TABLES
+   ========================================== */
+
+.main-content table {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+}
+
+.main-content table th,
+.main-content table td {
+    white-space: nowrap;
+}
+
+/* ==========================================
+   TABLETS AND MOBILE PHONES
+   ========================================== */
 
 @media (max-width: 760px) {
     body {
         padding: 12px;
+    }
+
+    .header {
+        padding: 12px;
+    }
+
+    .header-content {
+        width: 100%;
+        gap: 12px;
+        align-items: flex-start;
+    }
+
+    .header-content > div {
+        min-width: 0;
+    }
+
+    .header-content h1 {
+        font-size: clamp(17px, 4.5vw, 22px) !important;
+        overflow-wrap: anywhere;
+    }
+
+    .header-content > div:last-child {
+        max-width: 100%;
+        gap: 10px;
+    }
+
+    .main-content {
+        width: 100%;
+        padding: 12px;
+    }
+
+    .card {
+        padding: 14px;
+    }
+
+    .student-class-picker-group {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+    }
+
+    .student-class-level {
+        padding: 8px;
+    }
+
+    .student-class-arm {
+        min-width: 0;
+        padding: 8px 9px;
+    }
+
+    .tabs-viewport .tab,
+    .tab {
+        padding: 12px 13px;
+        font-size: 12px;
+    }
+
+    .tab-scroll-arrow {
+        flex-basis: 30px;
+    }
+
+    .main-content table {
+        width: 100%;
+        max-width: 100%;
     }
 
     img,
@@ -71,9 +291,32 @@ table {
     }
 }
 
-/* Small mobile screens */
+/* ==========================================
+   SMALL MOBILE SCREENS
+   ========================================== */
+
 @media (max-width: 420px) {
     body {
         padding: 8px;
+    }
+
+    .main-content {
+        padding: 8px;
+    }
+
+    .card {
+        padding: 10px;
+    }
+
+    .student-class-picker-group {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .header-content > div:last-child {
+        flex-wrap: wrap;
+    }
+
+    .tab-scroll-arrow {
+        flex-basis: 28px;
     }
 }
