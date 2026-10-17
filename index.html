@@ -4598,21 +4598,47 @@ async function renderFormMasterManagement(panel) {
     var schoolId = authenticatedProfile.school_id;
     var classResult = await supabaseClient.from('classes').select('id,class_name').eq('school_id', schoolId).order('class_name');
     if (classResult.error) throw classResult.error;
-    var assignmentResult = await supabaseClient.from('form_master_assignments')
-      .select('id,class_id,teacher_id,academic_session_id')
-      .eq('school_id', schoolId).eq('academic_session_id', activeAcademicSession.id);
-    if (assignmentResult.error) throw assignmentResult.error;
-    var classes = classResult.data || [];
-    var assignments = assignmentResult.data || [];
-    var profileIds = assignments.map(function(item) { return item.teacher_id; }).filter(function(id, index, all) { return id && all.indexOf(id) === index; });
-    var profilesById = {};
-    if (profileIds.length) {
-      var profilesResult = await supabaseClient.from('profiles')
-        .select('id,full_name,email,username,role,is_active')
-        .eq('school_id', schoolId).in('id', profileIds);
-      if (profilesResult.error) throw profilesResult.error;
-      (profilesResult.data || []).forEach(function(profile) { profilesById[String(profile.id)] = profile; });
+    var listResult = await supabaseClient.functions.invoke('manage-form-master', {
+      body: { action: 'list_assignments' }
+    });
+
+    if (listResult.error) {
+      throw new Error(
+        listResult.data && listResult.data.error
+          ? listResult.data.error
+          : listResult.error.message || 'Unable to load Form Master assignments.'
+      );
     }
+
+    if (!listResult.data || listResult.data.success !== true) {
+      throw new Error(
+        listResult.data && listResult.data.error
+          ? listResult.data.error
+          : 'The server did not confirm the Form Master assignment list.'
+      );
+    }
+
+    var classes = classResult.data || [];
+    var assignments = (listResult.data.assignments || []).map(function(item) {
+      return {
+        id: item.id || item.assignment_id,
+        school_id: item.school_id,
+        teacher_id: item.teacher_id,
+        class_id: item.class_id,
+        academic_session_id: item.academic_session_id
+      };
+    });
+
+    var profilesById = {};
+    (listResult.data.assignments || []).forEach(function(item) {
+      profilesById[String(item.teacher_id)] = {
+        id: item.teacher_id,
+        full_name: item.full_name,
+        email: item.email,
+        role: item.role,
+        is_active: item.is_active
+      };
+    });
     var classesById = {};
     classes.forEach(function(item) { classesById[String(item.id)] = item; });
     var armsWithAssignments = {};
