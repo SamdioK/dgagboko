@@ -5289,20 +5289,147 @@ function renderTeacherSignatures() {
 }
 
 // ===================== INPUT (MANUAL + EXCEL BULK) =====================
+var officialResultRosterRequest = 0;
+
+function normalizeStudentGender(value) {
+  var gender = String(value || '').trim().toLowerCase();
+  if (gender === 'male' || gender === 'm') return 'Male';
+  if (gender === 'female' || gender === 'f') return 'Female';
+  return '';
+}
+
+function getLegacyGeneratedAdmissionNumber(className, registerNumber) {
+  var armMatch = String(className || '').match(/^(BASIC[7-9]|SS[1-3])([A-E])$/);
+  var register = Number(registerNumber);
+  if (!armMatch || !Number.isInteger(register) || register < 1) return '';
+  var classCode = armMatch[1].indexOf('BASIC') === 0 ? 'B' + armMatch[1].slice(-1) : armMatch[1];
+  return 'D-GC/' + classCode + '/' + armMatch[2] + '/' + String(register).padStart(3, '0');
+}
+
+async function loadAssignedFormMasterClasses() {
+  if (!supabaseClient || !authenticatedProfile || !authenticatedProfile.school_id || !activeAcademicSession || !activeAcademicSession.id || !currentUser || !currentUser.id) {
+    throw new Error('An authenticated Form Master and active academic session are required to load assigned classes.');
+  }
+  var assignmentResult = await supabaseClient.from('form_master_assignments').select('class_id')
+    .eq('school_id', authenticatedProfile.school_id)
+    .eq('academic_session_id', activeAcademicSession.id)
+    .eq('teacher_id', currentUser.id);
+  if (assignmentResult.error) studentDbThrowQueryError(assignmentResult.error, "SELECT class_id FROM form_master_assignments WHERE school_id = authenticatedProfile.school_id AND academic_session_id = activeAcademicSession.id AND teacher_id = currentUser.id");
+  var classIds = (assignmentResult.data || []).map(function(item) { return item.class_id; }).filter(Boolean);
+  if (!classIds.length) return [];
+  var classesResult = await supabaseClient.from('classes').select('id,class_name')
+    .eq('school_id', authenticatedProfile.school_id).in('id', classIds).order('class_name');
+  if (classesResult.error) studentDbThrowQueryError(classesResult.error, "SELECT id,class_name FROM classes WHERE school_id = authenticatedProfile.school_id AND id IN (assigned Form Master class IDs) ORDER BY class_name");
+  return classesResult.data || [];
+}
+
+async function loadOfficialResultRoster(className) {
+  if (!supabaseClient || !authenticatedProfile || !authenticatedProfile.school_id || !activeAcademicSession || !activeAcademicSession.id) {
+    throw new Error('An authenticated school account and active academic session are required to load the official roster.');
+  }
+  if (!currentUser || currentUser.type !== 'formmaster' || !currentUser.id) {
+    throw new Error('The signed-in Form Master account could not be verified.');
+  }
+
+  var classResult = await supabaseClient.from('classes').select('id,class_name')
+    .eq('school_id', authenticatedProfile.school_id).eq('class_name', className).maybeSingle();
+  if (classResult.error) studentDbThrowQueryError(classResult.error, "SELECT id,class_name FROM classes WHERE school_id = authenticatedProfile.school_id AND class_name = selected Form Master class");
+  if (!classResult.data || !classResult.data.id) throw new Error('The selected class arm was not found for this school.');
+
+  var assignmentResult = await supabaseClient.from('form_master_assignments').select('class_id')
+    .eq('school_id', authenticatedProfile.school_id)
+    .eq('academic_session_id', activeAcademicSession.id)
+    .eq('teacher_id', currentUser.id);
+  if (assignmentResult.error) studentDbThrowQueryError(assignmentResult.error, "SELECT class_id FROM form_master_assignments WHERE school_id = authenticatedProfile.school_id AND academic_session_id = activeAcademicSession.id AND teacher_id = currentUser.id");
+  var assigned = (assignmentResult.data || []).some(function(item) { return String(item.class_id) === String(classResult.data.id); });
+  if (!assigned) throw new Error('You are not assigned to this class for the active academic session.');
+
+  var enrolmentsResult = await supabaseClient.from('student_enrolments').select('id,student_id,register_number,sid')
+    .eq('school_id', authenticatedProfile.school_id)
+    .eq('academic_session_id', activeAcademicSession.id)
+    .eq('class_id', classResult.data.id)
+    .order('register_number');
+  if (enrolmentsResult.error) studentDbThrowQueryError(enrolmentsResult.error, "SELECT id,student_id,register_number,sid FROM student_enrolments WHERE school_id = authenticatedProfile.school_id AND academic_session_id = activeAcademicSession.id AND class_id = selected class UUID ORDER BY register_number");
+  var enrolments = enrolmentsResult.data || [];
+  if (!enrolments.length) return [];
+
+  var studentIds = enrolments.map(function(item) { return item.student_id; }).filter(Boolean);
+  if (!studentIds.length) return [];
+  var studentsResult = await supabaseClient.from('students')
+    .select('id,school_id,admission_number,first_name,middle_name,last_name,gender,date_of_birth,status')
+    .eq('school_id', authenticatedProfile.school_id).in('id', studentIds);
+  if (studentsResult.error) studentDbThrowQueryError(studentsResult.error, "SELECT id,school_id,admission_number,first_name,middle_name,last_name,gender,date_of_birth,status FROM students WHERE school_id = authenticatedProfile.school_id AND id IN (enrolled student IDs)");
+  var studentsById = {};
+  (studentsResult.data || []).forEach(function(student) { studentsById[String(student.id)] = student; });
+  return enrolments.map(function(enrolment) {
+    return { enrolment: enrolment, student: studentsById[String(enrolment.student_id)] || null };
+  }).filter(function(item) { return !!item.student; });
+}
+
+function findExistingOfficialResult(identity) {
+  var session = schoolInfo.session || currentSchool.session || '';
+  var sameResultGroup = students.filter(function(result) {
+    return result.className === identity.className && String(result.term) === String(identity.term) &&
+      String(result.session || session) === String(session);
+  });
+  var studentId = String(identity.studentId || '').trim();
+  var admissionNumber = String(identity.admissionNumber || '').trim().toLowerCase();
+  var legacyAdmissionNumber = String(identity.legacyAdmissionNumber || '').trim().toLowerCase();
+  var nameKey = String(identity.studentName || '').trim().replace(/\s+/g, ' ').toLowerCase();
+  var uuidMatches = sameResultGroup.filter(function(result) {
+    return studentId && String(result.officialStudentId || '').trim() === studentId;
+  });
+  if (uuidMatches.length > 1) {
+    return { conflict: true, message: 'Multiple results already have this official student ID in the selected class, term, and session. Review the records manually.' };
+  }
+
+  var identityCandidates = sameResultGroup.filter(function(result) {
+    var resultAdmission = String(result.admNo || '').trim().toLowerCase();
+    var resultName = String(result.studentName || '').trim().replace(/\s+/g, ' ').toLowerCase();
+    return (admissionNumber && resultAdmission === admissionNumber) ||
+      (legacyAdmissionNumber && resultAdmission === legacyAdmissionNumber) ||
+      (nameKey && resultName === nameKey);
+  });
+  uuidMatches.forEach(function(result) {
+    if (identityCandidates.indexOf(result) === -1) identityCandidates.push(result);
+  });
+  if (identityCandidates.length > 1) {
+    return { conflict: true, message: 'Different student identifiers point to multiple existing results in the selected class, term, and session. Review the records manually; no result was changed.' };
+  }
+  if (identityCandidates.length) {
+    var candidate = identityCandidates[0];
+    if (!candidate.officialStudentId || String(candidate.officialStudentId).trim() !== studentId) {
+      return { conflict: true, message: 'An existing result may belong to this student but cannot be safely matched by admission number or name. Review it manually; no result was changed.' };
+    }
+    if (uuidMatches.length !== 1 || candidate !== uuidMatches[0]) {
+      return { conflict: true, message: 'The existing result identifiers conflict. Review the records manually; no result was changed.' };
+    }
+    var candidateAdmission = String(candidate.admNo || '').trim().toLowerCase();
+    var candidateName = String(candidate.studentName || '').trim().replace(/\s+/g, ' ').toLowerCase();
+    if (candidateAdmission !== admissionNumber || candidateName !== nameKey) {
+      return { conflict: true, message: 'The existing result matches this student UUID but its admission number or name differs. Review the record manually; no result was changed.' };
+    }
+  }
+  if (uuidMatches.length === 1) return { conflict: false, student: uuidMatches[0] };
+  return { conflict: false, student: null };
+}
+
 function renderInput() {
   if (currentUser.type === 'subjectteacher') { renderSubjectTeacherInput(); return; }
 
-  var selectedClass = currentUser.type === 'subadmin' ? (window.__subAdminInputArm || (classArms[0] && classArms[0].name)) : currentUser.arm;
+  var rosterRequest = ++officialResultRosterRequest;
+  var isOfficialFormMaster = currentUser.type === 'formmaster';
+  var selectedClass = currentUser.type === 'subadmin' ? (window.__subAdminInputArm || (classArms[0] && classArms[0].name)) : (isOfficialFormMaster ? (window.__formMasterInputArm || currentUser.arm) : currentUser.arm);
   var arm = classArms.find(function(a) { return a.name === selectedClass; });
-  var studentNames = arm ? arm.studentNames : [];
+  var studentNames = isOfficialFormMaster ? [] : (arm ? arm.studentNames : []);
   var config = assessmentConfig[selectedClass] || { ca1: 0, ca2: 0, ca3: 0, exam: 0 };
 
   selectedSubjects = []; subjectScores = {}; selectedTradeSubject = '';
   affectiveDomains.forEach(function(d) { affectiveRatings[d] = 5; });
   psychomotorDomains.forEach(function(d) { psychomotorRatings[d] = 5; });
 
-  var classSelector = currentUser.type === 'subadmin' ? '<div class="input-group" style="max-width:260px;"><label>Class Arm</label><select id="subadminInputArm">' + classArms.map(function(a) { return '<option value="' + a.name + '"' + (a.name === selectedClass ? ' selected' : '') + '>' + a.name + '</option>'; }).join('') + '</select></div>' : '';
-  var manualForm = '<div class="card"><h2>' + selectedClass + ' - Enter Results (Manual Entry)</h2>' + classSelector + '<p id="manualScoreLimits" style="background: #e3f2fd; padding: 10px; border-radius: 5px; margin: 15px 0; font-size: 12px;"><strong>Score Limits:</strong> ' + (getAssessmentConfiguration(selectedClass) ? 'CA1 (0-' + config.ca1 + '), CA2 (0-' + config.ca2 + '), CA3 (0-' + config.ca3 + '), Exam (0-' + config.exam + ')' : 'Assessment configuration has not yet been set for ' + escapeManagementText(normalizeAssessmentLevel(assessmentLevelForArm(selectedClass)) || selectedClass) + ' for the selected session and term.') + '</p><div class="grid grid-2"><div class="input-group"><label>Search Register (serial number or first 3 surname characters)</label><input type="search" id="studentSearch" placeholder="e.g. 01 or Man" autocomplete="off"></div><div class="input-group"><label>Student Name * — Register No.</label><select id="studentName"><option value="">Select</option>' + studentNames.map(function(n, i) { return n ? '<option value="' + escapeManagementText(n) + '" data-register="' + (i + 1) + '">' + String(i + 1).padStart(3, '0') + ' — ' + escapeManagementText(n) + '</option>' : ''; }).join('') + '</select></div><div class="input-group"><label>Admission Number (generated automatically)</label><input type="text" id="admNo" readonly style="background:#f0f0f0;"></div><div class="input-group"><label>Date of Birth *</label><div class="dob-selectors"><select id="dobDay"><option value="">Day</option>' + Array.from({length: 31}, function(_, i) { return '<option value="' + (i+1) + '">' + (i+1) + '</option>'; }).join('') + '</select><select id="dobMonth"><option value="">Month</option><option value="1">January</option><option value="2">February</option><option value="3">March</option><option value="4">April</option><option value="5">May</option><option value="6">June</option><option value="7">July</option><option value="8">August</option><option value="9">September</option><option value="10">October</option><option value="11">November</option><option value="12">December</option></select><select id="dobYear"><option value="">Year</option>' + Array.from({length: 56}, function(_, i) { return '<option value="' + (2015-i) + '">' + (2015-i) + '</option>'; }).join('') + '</select></div></div><div class="input-group"><label>Age</label><input type="text" id="age" disabled style="background: #f0f0f0;"></div><div class="input-group"><label>Sex *</label><select id="sex"><option value="">Select</option><option value="Male">Male</option><option value="Female">Female</option></select></div><div class="input-group"><label>Term *</label><select id="term"><option value="">Select</option><option value="1"' + (activeAssessmentTerm && Number(activeAssessmentTerm.term_number) === 1 ? ' selected' : '') + '>Term 1</option><option value="2"' + (activeAssessmentTerm && Number(activeAssessmentTerm.term_number) === 2 ? ' selected' : '') + '>Term 2</option><option value="3"' + (activeAssessmentTerm && Number(activeAssessmentTerm.term_number) === 3 ? ' selected' : '') + '>Term 3</option></select></div><div class="input-group"><label>Days Present (out of ' + ((Number(portalSettings.termWeeks) || 12) * 5) + ' school days)</label><input type="number" id="attendanceDays" min="0" max="' + ((Number(portalSettings.termWeeks) || 12) * 5) + '" value=""></div><div class="input-group"><label>Next Term School Fees Amount</label><input type="number" id="nextTermFees" min="0" step="0.01" placeholder="Enter amount"></div></div><div class="input-group"><label>Student Passport Photo (select a student to upload)</label><input type="file" id="studentPassport" accept="image/*"></div><div class="input-group"><label>Select Subjects</label><input type="text" id="subjectSearch" placeholder="Search subjects..." style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; margin-bottom: 10px;"><div class="subject-selector" id="subjectList"></div><div class="input-group" style="margin-top:10px;"><label for="tradeSubjectSelect">Trade Course (optional)</label><select id="tradeSubjectSelect"><option value="">Select a trade course</option>' + getSubjectsForClassName(selectedClass).trade.map(function(subject) { return '<option value="' + escapeManagementText(subject) + '">' + escapeManagementText(subject) + '</option>'; }).join('') + '</select></div><div class="selected-subjects" id="selectedSubjects"></div></div><div id="scoresSection" style="margin-top: 20px;"><h3>Enter Scores</h3><div id="scoreInputs"></div></div><h3 style="margin-top: 25px;">Affective Domain</h3><div id="affectiveSection" style="background: #f9f9f9; padding: 15px; border-radius: 8px; margin-bottom: 20px;"></div><h3>Psychomotor Domain</h3><div id="psychomotorSection" style="background: #f9f9f9; padding: 15px; border-radius: 8px; margin-bottom: 20px;"></div><div class="grid grid-2"><div class="input-group"><label>Form Master Comment</label><textarea id="formMasterComment" rows="3"></textarea></div><div class="input-group"><label>Form Master Signature</label><input type="file" id="formMasterSig" accept="image/*"></div></div><div style="display: flex; gap: 10px; margin-top: 20px;"><button class="btn btn-success" id="saveStudentBtn">Save Student</button><button class="btn btn-danger" id="clearFormBtn">Clear</button></div></div>';
+  var classSelector = currentUser.type === 'subadmin' ? '<div class="input-group" style="max-width:260px;"><label>Class Arm</label><select id="subadminInputArm">' + classArms.map(function(a) { return '<option value="' + escapeManagementText(a.name) + '"' + (a.name === selectedClass ? ' selected' : '') + '>' + escapeManagementText(a.name) + '</option>'; }).join('') + '</select></div>' : (isOfficialFormMaster ? '<div class="input-group" style="max-width:260px;"><label>Assigned Class Arm</label><select id="formMasterInputArm" disabled><option value="">Loading assigned classes…</option></select></div>' : '');
+  var manualForm = '<div class="card"><h2>' + selectedClass + ' - Enter Results (Manual Entry)</h2>' + classSelector + '<p id="manualScoreLimits" style="background: #e3f2fd; padding: 10px; border-radius: 5px; margin: 15px 0; font-size: 12px;"><strong>Score Limits:</strong> ' + (getAssessmentConfiguration(selectedClass) ? 'CA1 (0-' + config.ca1 + '), CA2 (0-' + config.ca2 + '), CA3 (0-' + config.ca3 + '), Exam (0-' + config.exam + ')' : 'Assessment configuration has not yet been set for ' + escapeManagementText(normalizeAssessmentLevel(assessmentLevelForArm(selectedClass)) || selectedClass) + ' for the selected session and term.') + '</p><div class="grid grid-2"><div class="input-group"><label>Search Register (serial number or first 3 surname characters)</label><input type="search" id="studentSearch" placeholder="e.g. 01 or Man" autocomplete="off"></div><div class="input-group"><label>Student Name * — Register No.</label><select id="studentName"' + (isOfficialFormMaster ? ' disabled' : '') + '><option value="">' + (isOfficialFormMaster ? 'Loading official enrolments…' : 'Select') + '</option>' + studentNames.map(function(n, i) { return n ? '<option value="' + escapeManagementText(n) + '" data-register="' + (i + 1) + '">' + String(i + 1).padStart(3, '0') + ' — ' + escapeManagementText(n) + '</option>' : ''; }).join('') + '</select>' + (isOfficialFormMaster ? '<p id="officialRosterStatus" role="status" aria-live="polite" style="font-size:12px;color:#666;margin-top:5px">Loading official enrolments…</p>' : '') + '</div><div class="input-group"><label>Admission Number</label><input type="text" id="admNo" readonly style="background:#f0f0f0;"></div><div class="input-group"><label>Date of Birth *</label><div class="dob-selectors"><select id="dobDay"><option value="">Day</option>' + Array.from({length: 31}, function(_, i) { return '<option value="' + (i+1) + '">' + (i+1) + '</option>'; }).join('') + '</select><select id="dobMonth"><option value="">Month</option><option value="1">January</option><option value="2">February</option><option value="3">March</option><option value="4">April</option><option value="5">May</option><option value="6">June</option><option value="7">July</option><option value="8">August</option><option value="9">September</option><option value="10">October</option><option value="11">November</option><option value="12">December</option></select><select id="dobYear"><option value="">Year</option>' + Array.from({length: 56}, function(_, i) { return '<option value="' + (2015-i) + '">' + (2015-i) + '</option>'; }).join('') + '</select></div></div><div class="input-group"><label>Age</label><input type="text" id="age" disabled style="background: #f0f0f0;"></div><div class="input-group"><label>Sex *</label><select id="sex"><option value="">Select</option><option value="Male">Male</option><option value="Female">Female</option></select></div><div class="input-group"><label>Term *</label><select id="term"><option value="">Select</option><option value="1"' + (activeAssessmentTerm && Number(activeAssessmentTerm.term_number) === 1 ? ' selected' : '') + '>Term 1</option><option value="2"' + (activeAssessmentTerm && Number(activeAssessmentTerm.term_number) === 2 ? ' selected' : '') + '>Term 2</option><option value="3"' + (activeAssessmentTerm && Number(activeAssessmentTerm.term_number) === 3 ? ' selected' : '') + '>Term 3</option></select></div><div class="input-group"><label>Days Present (out of ' + ((Number(portalSettings.termWeeks) || 12) * 5) + ' school days)</label><input type="number" id="attendanceDays" min="0" max="' + ((Number(portalSettings.termWeeks) || 12) * 5) + '" value=""></div><div class="input-group"><label>Next Term School Fees Amount</label><input type="number" id="nextTermFees" min="0" step="0.01" placeholder="Enter amount"></div></div><div class="input-group"><label>Student Passport Photo (select a student to upload)</label><input type="file" id="studentPassport" accept="image/*"></div><div class="input-group"><label>Select Subjects</label><input type="text" id="subjectSearch" placeholder="Search subjects..." style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; margin-bottom: 10px;"><div class="subject-selector" id="subjectList"></div><div class="input-group" style="margin-top:10px;"><label for="tradeSubjectSelect">Trade Course (optional)</label><select id="tradeSubjectSelect"><option value="">Select a trade course</option>' + getSubjectsForClassName(selectedClass).trade.map(function(subject) { return '<option value="' + escapeManagementText(subject) + '">' + escapeManagementText(subject) + '</option>'; }).join('') + '</select></div><div class="selected-subjects" id="selectedSubjects"></div></div><div id="scoresSection" style="margin-top: 20px;"><h3>Enter Scores</h3><div id="scoreInputs"></div></div><h3 style="margin-top: 25px;">Affective Domain</h3><div id="affectiveSection" style="background: #f9f9f9; padding: 15px; border-radius: 8px; margin-bottom: 20px;"></div><h3>Psychomotor Domain</h3><div id="psychomotorSection" style="background: #f9f9f9; padding: 15px; border-radius: 8px; margin-bottom: 20px;"></div><div class="grid grid-2"><div class="input-group"><label>Form Master Comment</label><textarea id="formMasterComment" rows="3"></textarea></div><div class="input-group"><label>Form Master Signature</label><input type="file" id="formMasterSig" accept="image/*"></div></div><div style="display: flex; gap: 10px; margin-top: 20px;"><button class="btn btn-success" id="saveStudentBtn">Save Student</button><button class="btn btn-danger" id="clearFormBtn">Clear</button></div></div>';
 
   var canManageRoster = currentUser.type === 'formmaster' || (currentUser.type === 'subadmin' && hasSubAdminPermission('manageStudents'));
   var rosterCard = canManageRoster ? '<div class="card dashed-box"><h2 style="margin-bottom: 10px;">📋 Import Student Names</h2><p style="color:#555; margin-bottom:15px; font-size:13px;">Download the roster template and enter each student\'s register serial number, name and sex (Male or Female). Serial numbers determine the displayed register order and admission number for <strong>' + selectedClass + '</strong>.</p><div class="input-group"><label>Student Names Spreadsheet</label><input type="file" id="studentNamesFile" accept=".xlsx,.xls,.csv"><small style="display:block;color:#666;margin-top:5px;">Upload the student list only. Add each student’s passport manually when selecting their name during result entry.</small></div><button class="btn btn-primary" id="downloadNamesTemplateBtn">⬇ Download Student Names Template</button> <button class="btn btn-success" id="importStudentNamesBtn">Upload Student Names</button><p id="studentNamesImportStatus" style="margin-top:10px; font-size:12px; color:#666;"></p></div>' : '';
@@ -5328,10 +5455,71 @@ function renderInput() {
     var registerNo = selectedOption && parseInt(selectedOption.getAttribute('data-register'), 10);
     var rosterClass = currentUser.type === 'subadmin' ? window.__subAdminInputArm : currentUser.arm;
     var rosterArm = classArms.find(function(item) { return item.name === rosterClass; });
-    var rosterSex = rosterArm && registerNo ? rosterArm.studentSexes && rosterArm.studentSexes[registerNo - 1] : '';
-    document.getElementById('sex').value = rosterSex || '';
+    var recordedGender = selectedOption && selectedOption.getAttribute('data-gender');
+    var rosterSex = isOfficialFormMaster ? normalizeStudentGender(recordedGender) : normalizeStudentGender(rosterArm && registerNo ? rosterArm.studentSexes && rosterArm.studentSexes[registerNo - 1] : '');
+    document.getElementById('sex').value = rosterSex;
     if (this.value) document.getElementById('studentPassport').click();
   });
+  if (isOfficialFormMaster) {
+    var rosterStatus = document.getElementById('officialRosterStatus');
+    var rosterSelect = document.getElementById('studentName');
+    var formMasterClassSelect = document.getElementById('formMasterInputArm');
+    loadAssignedFormMasterClasses().then(function(assignedClasses) {
+      if (rosterRequest !== officialResultRosterRequest || !rosterSelect.isConnected) return;
+      if (!assignedClasses.length) {
+        formMasterClassSelect.innerHTML = '<option value="">No assigned classes</option>';
+        rosterSelect.innerHTML = '<option value="">No class is assigned to this Form Master.</option>';
+        rosterSelect.disabled = true;
+        rosterStatus.textContent = 'No class is assigned to this Form Master for the active academic session.';
+        rosterStatus.className = 'alert alert-warning';
+        return;
+      }
+      var assignedSelectedClass = assignedClasses.some(function(item) { return String(item.class_name) === String(selectedClass); })
+        ? selectedClass : assignedClasses[0].class_name;
+      formMasterClassSelect.innerHTML = assignedClasses.map(function(item) {
+        return '<option value="' + escapeManagementText(item.class_name) + '"' + (String(item.class_name) === String(assignedSelectedClass) ? ' selected' : '') + '>' + escapeManagementText(item.class_name) + '</option>';
+      }).join('');
+      formMasterClassSelect.disabled = false;
+      if (String(assignedSelectedClass) !== String(selectedClass)) {
+        window.__formMasterInputArm = assignedSelectedClass;
+        renderInput();
+        return;
+      }
+      formMasterClassSelect.addEventListener('change', function() {
+        window.__formMasterInputArm = this.value;
+        renderInput();
+      });
+      loadOfficialResultRoster(assignedSelectedClass).then(function(records) {
+        if (rosterRequest !== officialResultRosterRequest || !rosterSelect.isConnected) return;
+        rosterSelect.innerHTML = '<option value="">' + (records.length ? 'Select' : 'No official students enrolled in this class for the active session.') + '</option>' + records.map(function(item) {
+          var student = item.student;
+          var enrolment = item.enrolment;
+          var name = studentDbName(student);
+          var registerNumber = Number(enrolment.register_number);
+          var registerLabel = Number.isInteger(registerNumber) && registerNumber > 0 ? String(registerNumber).padStart(3, '0') : '—';
+          return '<option value="' + escapeManagementText(name) + '" data-register="' + escapeManagementText(enrolment.register_number == null ? '' : enrolment.register_number) + '" data-student-id="' + escapeManagementText(student.id) + '" data-admission-number="' + escapeManagementText(student.admission_number || '') + '" data-gender="' + escapeManagementText(student.gender || '') + '">' + registerLabel + ' — ' + escapeManagementText(name) + '</option>';
+        }).join('');
+        rosterSelect.disabled = records.length === 0;
+        rosterStatus.textContent = records.length ? records.length + ' official student(s) loaded for ' + assignedSelectedClass + ' — ' + activeAcademicSession.name + '.' : 'No official student enrolments were found for ' + assignedSelectedClass + ' in ' + activeAcademicSession.name + '.';
+        rosterStatus.className = records.length ? '' : 'alert alert-info';
+      }).catch(function(error) {
+        if (rosterRequest !== officialResultRosterRequest || !rosterSelect.isConnected) return;
+        rosterSelect.innerHTML = '<option value="">Official roster unavailable.</option>';
+        rosterSelect.disabled = true;
+        rosterStatus.textContent = 'Unable to load the official roster: ' + (error && error.message ? error.message : 'Unknown database error.');
+        rosterStatus.className = 'alert alert-error';
+        console.error('Official Form Master roster load failed:', error);
+      });
+    }).catch(function(error) {
+      if (rosterRequest !== officialResultRosterRequest || !rosterSelect.isConnected) return;
+      formMasterClassSelect.innerHTML = '<option value="">Assigned classes unavailable</option>';
+      rosterSelect.innerHTML = '<option value="">Official roster unavailable.</option>';
+      rosterSelect.disabled = true;
+      rosterStatus.textContent = 'Unable to load assigned classes or the official roster: ' + (error && error.message ? error.message : 'Unknown database error.');
+      rosterStatus.className = 'alert alert-error';
+      console.error('Form Master assigned class load failed:', error);
+    });
+  }
   document.getElementById('term').addEventListener('change', async function() {
     var selectedTerm = availableAssessmentTerms.find(function(item) { return String(item.term_number) === this.value; }.bind(this));
     if (!selectedTerm || !activeAcademicSession) { showToast('The selected term is not configured in Supabase.', 'error'); return; }
@@ -5386,6 +5574,10 @@ function updateAdmissionNumber() {
   var admissionInput = document.getElementById('admNo');
   if (!select || !admissionInput) return;
   var option = select.options[select.selectedIndex];
+  if (option && option.getAttribute('data-student-id')) {
+    admissionInput.value = option.getAttribute('data-admission-number') || '';
+    return;
+  }
   var registerNo = option && option.getAttribute('data-register');
   var className = currentUser.type === 'subadmin' ? window.__subAdminInputArm : currentUser.arm;
   var armMatch = String(className || '').match(/^(BASIC[7-9]|SS[1-3])([A-E])$/);
@@ -5572,7 +5764,7 @@ async function saveStudent() {
   if (nextTermFeesInput !== '' && (!isFinite(nextTermFees) || nextTermFees < 0)) { showToast('Enter a valid non-negative school fees amount', 'error'); return; }
   if (!studentName || !admNo || !age || !sex || !term) { showToast('Fill all required fields', 'error'); return; }
   if (selectedSubjects.length === 0) { showToast('Select at least one subject', 'error'); return; }
-  var selectedClassForSave = currentUser.type === 'subadmin' ? window.__subAdminInputArm : currentUser.arm;
+  var selectedClassForSave = currentUser.type === 'subadmin' ? window.__subAdminInputArm : (currentUser.type === 'formmaster' ? (window.__formMasterInputArm || currentUser.arm) : currentUser.arm);
   if (!activeAssessmentTerm || String(activeAssessmentTerm.term_number) !== String(term)) {
     showToast('Assessment settings for the selected term are still loading. Select the term again and retry.', 'error'); return;
   }
@@ -5586,6 +5778,29 @@ async function saveStudent() {
     return Object.keys(scoreLimits).some(function(field) { return !isFinite(Number(scores[field])) || Number(scores[field]) < 0 || Number(scores[field]) > scoreLimits[field]; });
   });
   if (invalidScore) { showToast('One or more scores exceed the configured assessment limits.', 'error'); return; }
+
+  var selectedOption = document.getElementById('studentName').options[document.getElementById('studentName').selectedIndex];
+  var officialIdentity = null;
+  var existingOfficialResult = null;
+  if (currentUser.type === 'formmaster') {
+    if (!selectedOption || !selectedOption.getAttribute('data-student-id') || !admNo) {
+      showToast('Select a student from the loaded official enrolment roster before saving.', 'error'); return;
+    }
+    officialIdentity = {
+      studentId: selectedOption.getAttribute('data-student-id'),
+      admissionNumber: admNo,
+      studentName: studentName,
+      registerNumber: selectedOption.getAttribute('data-register'),
+      className: selectedClassForSave,
+      term: term,
+      legacyAdmissionNumber: getLegacyGeneratedAdmissionNumber(selectedClassForSave, selectedOption.getAttribute('data-register'))
+    };
+    var existingMatch = findExistingOfficialResult(officialIdentity);
+    if (existingMatch.conflict) {
+      showToast(existingMatch.message || 'An existing result cannot be safely matched to this official student. No result was changed; review the existing record manually.', 'error'); return;
+    }
+    existingOfficialResult = existingMatch.student;
+  }
 
   var passportFile = document.getElementById('studentPassport').files[0];
   var formMasterSigFile = document.getElementById('formMasterSig').files[0];
@@ -5601,12 +5816,16 @@ async function saveStudent() {
       subjects.push({ name: subject, ca1: scores.ca1, ca2: scores.ca2, ca3: scores.ca3, exam: scores.exam, total: total, grade: grade, remark: remark });
     });
     var avgScore = (totalScore / totalObtainable) * 100;
-    var selectedClass = currentUser.type === 'subadmin' ? window.__subAdminInputArm : currentUser.arm;
+    var selectedClass = selectedClassForSave;
     var arm = classArms.find(function(a) { return a.name === selectedClass; });
     var currentSession = schoolInfo.session || currentSchool.session || '';
     var newStudent = { id: Date.now(), studentName: studentName, admNo: admNo, dob: dob, age: age, sex: sex, term: term, session: currentSession, className: selectedClass, subjects: subjects, averageScore: avgScore, totalObtained: totalScore, totalObtainable: totalObtainable, position: null, positionOf: null, passport: passportData || null, formMaster: arm ? arm.formMaster : currentUser.name, formMasterComment: formMasterComment, formMasterSignature: formMasterSigData, attendanceDays: attendanceDays, schoolDays: schoolDays, nextTermFees: nextTermFees, affective: JSON.parse(JSON.stringify(affectiveRatings)), psychomotor: JSON.parse(JSON.stringify(psychomotorRatings)) };
+    if (officialIdentity) {
+      newStudent.officialStudentId = officialIdentity.studentId;
+      newStudent.registerNumber = officialIdentity.registerNumber;
+    }
     var canUpdateExisting = currentUser.type !== 'subadmin' || hasSubAdminPermission('editResults');
-    var existingStudent = canUpdateExisting ? students.find(function(s) { return s.admNo === admNo && s.className === selectedClass && String(s.term) === String(term) && String(s.session || currentSession) === String(currentSession); }) : null;
+    var existingStudent = currentUser.type === 'formmaster' ? existingOfficialResult : (canUpdateExisting ? students.find(function(s) { return s.admNo === admNo && s.className === selectedClass && String(s.term) === String(term) && String(s.session || currentSession) === String(currentSession); }) : null);
     if (existingStudent) {
       newStudent.id = existingStudent.id; newStudent.studentPassword = existingStudent.studentPassword; newStudent.published = existingStudent.published; newStudent.releaseStage = existingStudent.releaseStage;
       if (!document.getElementById('attendanceDays').value) { newStudent.attendanceDays = existingStudent.attendanceDays || 0; newStudent.schoolDays = existingStudent.schoolDays || schoolDays; }
