@@ -246,6 +246,205 @@
       await uploadStudentPassport(studentId, file, isReplacement);
       this.value = '';
     };
+
+    installBulkPassportControls();
+  }
+
+  // Bulk passport files are matched to enrolled students by admission number.
+  function installBulkPassportControls() {
+    var heading = document.querySelector(
+      '#passportRegistrationTab .passport-heading'
+    );
+    if (!heading || document.getElementById('passportBulkInput')) return;
+
+    var button = document.createElement('button');
+    button.type = 'button';
+    button.id = 'passportBulkButton';
+    button.className = 'passport-action passport-primary';
+    button.textContent = 'Bulk upload passports';
+
+    var input = document.createElement('input');
+    input.type = 'file';
+    input.id = 'passportBulkInput';
+    input.accept = 'image/jpeg,image/png,image/webp';
+    input.multiple = true;
+    input.className = 'passport-file-input';
+
+    heading.appendChild(button);
+    document.getElementById('passportRegistrationTab').appendChild(input);
+
+    button.onclick = function () {
+      if (state.busy) {
+        passportNotice('Please wait for the current operation to finish.', 'error');
+        return;
+      }
+
+      if (!state.selectedClassId || !state.students.length) {
+        passportNotice('Select a class and load its student register first.', 'error');
+        return;
+      }
+
+      input.value = '';
+      input.click();
+    };
+
+    input.onchange = async function () {
+      var files = Array.from(input.files || []);
+      if (!files.length) return;
+
+      var normalize = function (value) {
+        return String(value || '')
+          .trim()
+          .toUpperCase()
+          .replace(/[^A-Z0-9]/g, '');
+      };
+
+      var studentsByAdmission = Object.create(null);
+      state.students.forEach(function (item) {
+        var key = normalize(item.student.admission_number);
+        if (!key) return;
+
+        if (!studentsByAdmission[key]) studentsByAdmission[key] = [];
+        studentsByAdmission[key].push(item);
+      });
+
+      var usedStudents = Object.create(null);
+      var usedKeys = Object.create(null);
+      var matches = [];
+      var problems = [];
+
+      files.forEach(function (file) {
+        var extension = file.name.match(/\.[^.]+$/);
+        var stem = extension
+          ? file.name.slice(0, -extension[0].length)
+          : file.name;
+        var key = normalize(stem);
+
+        if (!key) {
+          problems.push(file.name + ': filename has no admission number.');
+          return;
+        }
+
+        if (usedKeys[key]) {
+          problems.push(file.name + ': duplicate admission-number filename.');
+          return;
+        }
+        usedKeys[key] = true;
+
+        var candidates = studentsByAdmission[key] || [];
+
+        if (candidates.length === 0) {
+          problems.push(file.name + ': no matching student in the selected class.');
+          return;
+        }
+
+        if (candidates.length > 1) {
+          problems.push(file.name + ': admission number matches multiple students.');
+          return;
+        }
+
+        var item = candidates[0];
+        var studentId = String(item.student.id);
+
+        if (usedStudents[studentId]) {
+          problems.push(file.name + ': this student already has another selected image.');
+          return;
+        }
+        usedStudents[studentId] = true;
+
+        if (item.passport && item.passport.storage_path) {
+          problems.push(
+            file.name + ': SKIPPED — ' + passportName(item.student) +
+            ' already has a passport.'
+          );
+          return;
+        }
+
+        if (allowedTypes.indexOf(file.type) === -1) {
+          problems.push(file.name + ': unsupported image type.');
+          return;
+        }
+
+        if (file.size > MAX_FILE_SIZE) {
+          problems.push(file.name + ': image exceeds the 5 MB limit.');
+          return;
+        }
+
+        matches.push({ file: file, item: item });
+      });
+
+      if (!matches.length) {
+        passportNotice(
+          'No eligible passport matches were found.' +
+          (problems.length ? '\n' + problems.join('\n') : ''),
+          'error'
+        );
+        return;
+      }
+
+      var preview = matches.map(function (match, index) {
+        return (index + 1) + '. ' +
+          passportName(match.item.student) + ' — ' +
+          match.item.student.admission_number + ' ← ' +
+          match.file.name;
+      }).join('\n');
+
+      var message =
+        'REVIEW BULK PASSPORT MATCHES\n\n' +
+        preview +
+        '\n\nReady to upload: ' + matches.length +
+        '\nSkipped or flagged: ' + problems.length +
+        (problems.length ? '\n\n' + problems.join('\n') : '') +
+        '\n\nContinue with these matches?';
+
+      if (!confirm(message)) {
+        passportNotice('Bulk upload cancelled. No files were uploaded.', 'info');
+        return;
+      }
+
+      var completed = 0;
+      var failed = [];
+
+      for (var i = 0; i < matches.length; i++) {
+        var match = matches[i];
+
+        passportNotice(
+          'Uploading passport ' + (i + 1) + ' of ' + matches.length +
+          ': ' + passportName(match.item.student),
+          'info'
+        );
+
+        try {
+          await uploadStudentPassport(
+            match.item.student.id,
+            match.file,
+            false
+          );
+
+          var latest = state.students.find(function (row) {
+            return String(row.student.id) === String(match.item.student.id);
+          });
+
+          if (latest && latest.passport && latest.passport.storage_path) {
+            completed++;
+          } else {
+            failed.push(match.file.name + ': upload could not be confirmed.');
+          }
+        } catch (error) {
+          failed.push(match.file.name + ': ' + (error.message || 'Upload failed.'));
+        }
+      }
+
+      passportNotice(
+        'Bulk upload finished. Confirmed: ' + completed +
+        '. Failed or unconfirmed: ' + failed.length +
+        (failed.length ? '\n' + failed.join('\n') : ''),
+        failed.length ? 'error' : 'success'
+      );
+
+      await loadPassportStudents();
+      input.value = '';
+    };
   }
 
   async function loadPassportRegistration(showMessage) {
