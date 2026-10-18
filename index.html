@@ -22,8 +22,15 @@ body { font-family: 'Segoe UI', Arial, sans-serif; background: #f5f5f5; }
 .app-container.active { display: block; }
 .header { background: #667eea; color: white; padding: 15px 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
 .header-content { max-width: 1400px; margin: 0 auto; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; }
-.tabs { background: white; border-bottom: 1px solid #ddd; overflow-x: auto; }
-.tabs-content { max-width: 1400px; margin: 0 auto; display: flex; }
+ .tabs { background: white; border-bottom: 1px solid #ddd; display: flex; align-items: stretch; }
+.tabs-viewport { min-width: 0; flex: 1; overflow-x: auto; scrollbar-width: none; }
+.tabs-viewport::-webkit-scrollbar { display: none; }
+.tabs-content { max-width: 1400px; margin: 0 auto; display: flex; width: max-content; min-width: 100%; }
+.tab-scroll-arrow { display: none; flex: 0 0 38px; align-items: center; justify-content: center; border: 0; background: #fff; color: #5568d3; font-size: 26px; cursor: pointer; }
+.tab-scroll-arrow.visible { display: flex; }
+.tab-scroll-arrow:hover { background: #f1f2ff; }
+.tab-scroll-arrow:focus-visible { outline: 2px solid #667eea; outline-offset: -2px; }
+@media (max-width: 600px) { .tab-scroll-arrow { flex-basis: 32px; } }
 .tab { padding: 14px 18px; background: transparent; color: #666; border: none; cursor: pointer; font-weight: 500; font-size: 13px; white-space: nowrap; }
 .tab.active { background: #667eea; color: white; font-weight: 600; }
 .main-content { max-width: 1400px; margin: 0 auto; padding: 20px; }
@@ -238,7 +245,27 @@ th { background: #f5f5f5; font-weight: 600; }
       </div>
     </div>
   </div>
-  <div class="tabs"><div class="tabs-content" id="tabsContainer"></div></div>
+  <div class="tabs" id="portalTabs">
+    <button
+      type="button"
+      class="tab-scroll-arrow"
+      id="tabsScrollLeft"
+      aria-label="Scroll navigation left"
+      title="Scroll left"
+    >&#8249;</button>
+
+    <div class="tabs-viewport" id="tabsViewport">
+      <div class="tabs-content" id="tabsContainer"></div>
+    </div>
+
+    <button
+      type="button"
+      class="tab-scroll-arrow"
+      id="tabsScrollRight"
+      aria-label="Scroll navigation right"
+      title="Scroll right"
+    >&#8250;</button>
+  </div>
   <div class="main-content">
     <div id="dashboardTab" class="hidden"></div>
     <div id="armsTab" class="hidden"></div>
@@ -251,6 +278,7 @@ th { background: #f5f5f5; font-weight: 600; }
     <div id="computeTab" class="hidden"></div>
     <div id="viewTab" class="hidden"></div>
     <div id="studentDatabaseTab" class="hidden"></div>
+    <div id="passportRegistrationTab" class="hidden"></div>
     <div id="printTab" class="hidden"></div>
     <div id="managementTab" class="hidden"></div>
     <div id="staffDatabaseTab" class="hidden"></div>
@@ -1470,7 +1498,7 @@ function showApp() {
 
   var tabs;
   if (currentUser.type === 'admin') {
-    tabs = ['dashboard', 'arms', 'masters', 'school', 'profile', 'assessment', 'teacherSignatures', 'management', 'staffDatabase', 'studentDatabase', 'userManagement', 'release', 'view', 'compute', 'print', 'portalContent'];
+    tabs = ['dashboard', 'arms', 'masters', 'school', 'profile', 'assessment', 'teacherSignatures', 'management', 'staffDatabase', 'studentDatabase', 'passportRegistration', 'userManagement', 'release', 'view', 'compute', 'print', 'portalContent'];
   } else if (currentUser.type === 'subadmin') {
     tabs = [];
     if (hasSubAdminPermission('enterResults') || hasSubAdminPermission('editResults')) tabs.push('input');
@@ -1498,7 +1526,7 @@ function showApp() {
     var btn = document.createElement('button');
     btn.className = 'tab';
     if (idx === 0) btn.classList.add('active');
-    var tabLabels = { profile: 'Admin Profile', teacherSignatures: "Teachers' Signature", management: 'Management Staff', staffDatabase: 'Staff Database', studentDatabase: 'Student Database', userManagement: 'User Management', release: 'Release Results', studentResults: 'Student Results', portalContent: 'Portal Options', developer: 'Developer Console' };
+    var tabLabels = { profile: 'Admin Profile', teacherSignatures: "Teachers' Signature", management: 'Management Staff', staffDatabase: 'Staff Database', studentDatabase: 'Student Database', passportRegistration: 'Student Passport Registration', userManagement: 'User Management', release: 'Release Results', studentResults: 'Student Results', portalContent: 'Portal Options', developer: 'Developer Console' };
     btn.textContent = tabLabels[tab] || tab.charAt(0).toUpperCase() + tab.slice(1);
     btn.addEventListener('click', function() {
       document.querySelectorAll('.tab').forEach(function(t) { t.classList.remove('active'); });
@@ -1507,14 +1535,81 @@ function showApp() {
     });
     tabsContainer.appendChild(btn);
   });
+  setupTabScrollControls();
   showTab(tabs[0]);
+}
+
+function setupTabScrollControls() {
+  var viewport = document.getElementById('tabsViewport');
+  var left = document.getElementById('tabsScrollLeft');
+  var right = document.getElementById('tabsScrollRight');
+
+  if (!viewport || !left || !right) return;
+
+  if (viewport.dataset.scrollControlsReady !== 'true') {
+    left.addEventListener('click', function() {
+      viewport.scrollBy({
+        left: -Math.max(180, viewport.clientWidth * 0.7),
+        behavior: 'smooth'
+      });
+    });
+
+    right.addEventListener('click', function() {
+      viewport.scrollBy({
+        left: Math.max(180, viewport.clientWidth * 0.7),
+        behavior: 'smooth'
+      });
+    });
+
+    viewport.addEventListener(
+      'scroll',
+      updateTabScrollIndicators,
+      { passive: true }
+    );
+
+    window.addEventListener(
+      'resize',
+      updateTabScrollIndicators
+    );
+
+    viewport.dataset.scrollControlsReady = 'true';
+  }
+
+  requestAnimationFrame(updateTabScrollIndicators);
+}
+
+function updateTabScrollIndicators() {
+  var viewport = document.getElementById('tabsViewport');
+  var left = document.getElementById('tabsScrollLeft');
+  var right = document.getElementById('tabsScrollRight');
+
+  if (!viewport || !left || !right) return;
+
+  var maxScroll = Math.max(
+    0,
+    viewport.scrollWidth - viewport.clientWidth
+  );
+
+  var hasOverflow = maxScroll > 2;
+  var atStart = viewport.scrollLeft <= 2;
+  var atEnd = viewport.scrollLeft >= maxScroll - 2;
+
+  left.classList.toggle(
+    'visible',
+    hasOverflow && !atStart
+  );
+
+  right.classList.toggle(
+    'visible',
+    hasOverflow && !atEnd
+  );
 }
 
 function showTab(tabName) {
   var requiredPermission = { input: 'enterResults', view: 'manageStudents', masters: 'manageTeachers', school: 'manageSchool', management: 'manageBoard', userManagement: 'createAdmins', release: 'publishResults', print: 'generateSheets' };
   if (currentUser && currentUser.type === 'subadmin' && (!requiredPermission[tabName] || (!hasSubAdminPermission(requiredPermission[tabName]) && !(tabName === 'input' && hasSubAdminPermission('editResults'))))) return;
   if (currentUser && currentUser.type === 'student' && tabName !== 'studentResults') return;
-  ['dashboard', 'arms', 'masters', 'school', 'profile', 'assessment', 'teacherSignatures', 'management', 'staffDatabase', 'studentDatabase', 'input', 'compute', 'view', 'print', 'userManagement', 'release', 'studentResults', 'portalContent', 'developer'].forEach(function(t) {
+  ['dashboard', 'arms', 'masters', 'school', 'profile', 'assessment', 'teacherSignatures', 'management', 'staffDatabase', 'studentDatabase', 'passportRegistration', 'input', 'compute', 'view', 'print', 'userManagement', 'release', 'studentResults', 'portalContent', 'developer'].forEach(function(t) {
     document.getElementById(t + 'Tab').classList.add('hidden');
   });
   document.getElementById(tabName + 'Tab').classList.remove('hidden');
@@ -1531,6 +1626,7 @@ function showTab(tabName) {
   else if (tabName === 'compute') renderCompute();
   else if (tabName === 'view') renderView();
   else if (tabName === 'studentDatabase') renderStudentDatabase();
+  else if (tabName === 'passportRegistration') renderPassportRegistration();
   else if (tabName === 'print') renderPrint();
   else if (tabName === 'userManagement') renderUserManagement();
   else if (tabName === 'release') renderReleaseResults();
@@ -6913,5 +7009,6 @@ function renderSubjectTeacherInput() {
   showDirectionDialog();
 }
 </script>
+<script src="passport-registration.js"></script>
 </body>
 </html>
