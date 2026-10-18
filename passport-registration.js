@@ -1,4 +1,3 @@
-
 /* =========================================================
    DE-GLOBAL ACADEMY — STUDENT PASSPORT REGISTRATION
    File: passport-registration.js
@@ -11,6 +10,7 @@
   var BUCKET = 'student-passports';
   var MAX_FILE_SIZE = 5 * 1024 * 1024;
   var allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
+
   var state = {
     classes: [],
     students: [],
@@ -88,61 +88,397 @@
 
     var style = document.createElement('style');
     style.id = 'passportRegistrationStyles';
+
     style.textContent = `
-      #passportRegistrationTab { min-width:0; width:100%; }
-      .passport-page { max-width:1200px; margin:0 auto; padding:clamp(10px,2vw,24px); color:#172033; }
-      .passport-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:18px; }
-      .passport-heading h2 { margin:0 0 5px; font-size:clamp(20px,3vw,28px); }
-      .passport-muted { color:#667085; font-size:13px; line-height:1.5; }
-      .passport-panel { background:#fff; border:1px solid #e1e7f0; border-radius:14px; padding:16px; margin-bottom:16px; box-shadow:0 3px 12px rgba(20,35,70,.04); min-width:0; }
-      .passport-class-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,145px),1fr)); gap:10px; }
-      .passport-class-button { display:block; width:100%; min-width:0; text-align:left; border:1px solid #d6dfed; background:#f8faff; border-radius:10px; padding:12px; cursor:pointer; color:#23324c; overflow-wrap:anywhere; }
-      .passport-class-button strong { display:block; font-size:14px; }
-      .passport-class-button small { display:block; margin-top:4px; color:#667085; }
-      .passport-class-button.selected { background:#eaf1ff; border:2px solid #315fc4; padding:11px; color:#173f91; }
-      .passport-toolbar { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:14px; }
-      .passport-search { flex:1 1 220px; min-width:0; width:100%; box-sizing:border-box; border:1px solid #ccd5e2; border-radius:9px; padding:11px 12px; font-size:15px; }
-      .passport-count { font-size:13px; color:#667085; }
-      .passport-student-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(100%,245px),1fr)); gap:14px; }
-      .passport-student-card { border:1px solid #e0e6ef; border-radius:13px; overflow:hidden; min-width:0; background:#fff; }
-      .passport-photo-area { min-height:170px; background:#f2f5fa; display:flex; align-items:center; justify-content:center; padding:12px; }
-      .passport-photo { width:120px; height:140px; object-fit:cover; border-radius:8px; border:1px solid #d8dfeb; background:white; }
-      .passport-no-photo { width:120px; height:140px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; text-align:center; border:1px dashed #bac5d6; border-radius:8px; color:#667085; font-size:12px; padding:8px; box-sizing:border-box; }
-      .passport-student-info { padding:13px; }
-      .passport-student-info h3 { font-size:15px; margin:0 0 7px; overflow-wrap:anywhere; }
-      .passport-student-info p { font-size:12px; margin:5px 0; color:#5b6576; overflow-wrap:anywhere; }
-      .passport-status { display:inline-block; border-radius:20px; padding:5px 9px; font-size:11px; font-weight:700; margin:3px 0 10px; }
-      .passport-status.complete { background:#e3f6e9; color:#176534; }
-      .passport-status.missing { background:#fff0d7; color:#855000; }
-      .passport-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
-      .passport-action { border:0; border-radius:8px; padding:10px 12px; cursor:pointer; font-size:13px; font-weight:600; }
-      .passport-action:disabled { opacity:.55; cursor:not-allowed; }
-      .passport-primary { background:#2457b8; color:#fff; }
-      .passport-danger { background:#fff0f0; color:#a32323; border:1px solid #efc6c6; }
-      .passport-notice { display:none; margin:0 0 14px; padding:12px; border-radius:9px; overflow-wrap:anywhere; font-size:14px; }
-      .passport-notice.info { background:#edf4ff; color:#214b8f; }
-      .passport-notice.success { background:#e7f7ec; color:#176534; }
-      .passport-notice.error { background:#fff0f0; color:#9b2525; }
-      .passport-empty { padding:26px 12px; text-align:center; color:#667085; border:1px dashed #d5dce7; border-radius:10px; }
-      .passport-file-input { display:none; }
-      @media(max-width:520px) {
-        .passport-page { padding:9px; }
-        .passport-panel { padding:12px; }
-        .passport-student-grid { grid-template-columns:1fr; }
-        .passport-student-card { display:grid; grid-template-columns:112px minmax(0,1fr); }
-        .passport-photo-area { min-height:0; padding:8px; }
-        .passport-photo { width:94px; height:118px; }
-        .passport-no-photo { width:94px; height:118px; }
-        .passport-student-info { padding:10px; }
-        .passport-actions { flex-direction:column; }
-        .passport-action { width:100%; }
+      #passportRegistrationTab {
+        min-width: 0;
+        width: 100%;
+      }
+
+      .passport-page {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: clamp(10px, 2vw, 24px);
+        color: #172033;
+      }
+
+      .passport-heading {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        flex-wrap: wrap;
+        margin-bottom: 18px;
+      }
+
+      .passport-heading h2 {
+        margin: 0 0 5px;
+        font-size: clamp(20px, 3vw, 28px);
+      }
+
+      .passport-muted {
+        color: #667085;
+        font-size: 13px;
+        line-height: 1.5;
+      }
+
+      .passport-panel {
+        background: #fff;
+        border: 1px solid #e1e7f0;
+        border-radius: 14px;
+        padding: 16px;
+        margin-bottom: 16px;
+        box-shadow: 0 3px 12px rgba(20, 35, 70, .04);
+        min-width: 0;
+      }
+
+      .passport-class-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(min(100%, 145px), 1fr));
+        gap: 10px;
+      }
+
+      .passport-class-button {
+        display: block;
+        width: 100%;
+        min-width: 0;
+        text-align: left;
+        border: 1px solid #d6dfed;
+        background: #f8faff;
+        border-radius: 10px;
+        padding: 12px;
+        cursor: pointer;
+        color: #23324c;
+        overflow-wrap: anywhere;
+      }
+
+      .passport-class-button strong {
+        display: block;
+        font-size: 14px;
+      }
+
+      .passport-class-button small {
+        display: block;
+        margin-top: 4px;
+        color: #667085;
+      }
+
+      .passport-class-button.selected {
+        background: #eaf1ff;
+        border: 2px solid #315fc4;
+        padding: 11px;
+        color: #173f91;
+      }
+
+      .passport-toolbar {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin-bottom: 14px;
+      }
+
+      .passport-search {
+        flex: 1 1 220px;
+        min-width: 0;
+        width: 100%;
+        box-sizing: border-box;
+        border: 1px solid #ccd5e2;
+        border-radius: 9px;
+        padding: 11px 12px;
+        font-size: 15px;
+      }
+
+      .passport-count {
+        font-size: 13px;
+        color: #667085;
+      }
+
+      .passport-student-scroller {
+        min-width: 0;
+        width: 100%;
+      }
+
+      .passport-scroll-controls {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        margin-bottom: 10px;
+      }
+
+      .passport-scroll-controls span {
+        flex: 1;
+        text-align: center;
+        color: #667085;
+        font-size: 12px;
+        line-height: 1.5;
+      }
+
+      .passport-scroll-button {
+        flex: 0 0 auto;
+        min-width: 44px;
+        min-height: 42px;
+        padding: 8px 12px;
+        border: 1px solid #ccd5e2;
+        border-radius: 8px;
+        background: #f8faff;
+        color: #23324c;
+        font-size: 22px;
+        font-weight: bold;
+        cursor: pointer;
+        touch-action: manipulation;
+      }
+
+      .passport-scroll-button:focus-visible {
+        outline: 2px solid #315fc4;
+        outline-offset: 2px;
+      }
+
+      .passport-scroll-button:disabled {
+        opacity: .4;
+        cursor: not-allowed;
+      }
+
+      .passport-student-grid {
+        display: flex;
+        gap: 14px;
+        min-width: 0;
+        width: 100%;
+        overflow-x: auto;
+        overflow-y: hidden;
+        padding: 2px 2px 12px;
+        box-sizing: border-box;
+        scroll-snap-type: x mandatory;
+        scroll-behavior: smooth;
+        -webkit-overflow-scrolling: touch;
+        overscroll-behavior-x: contain;
+      }
+
+      .passport-student-grid:focus-visible {
+        outline: 2px solid #315fc4;
+        outline-offset: 2px;
+      }
+
+      .passport-student-grid > .passport-empty {
+        flex: 0 0 100%;
+        box-sizing: border-box;
+      }
+
+      .passport-student-card {
+        flex: 0 0 285px;
+        min-width: 0;
+        scroll-snap-align: start;
+        border: 1px solid #e0e6ef;
+        border-radius: 13px;
+        overflow: hidden;
+        background: #fff;
+        box-sizing: border-box;
+      }
+
+      .passport-photo-area {
+        min-height: 170px;
+        background: #f2f5fa;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 12px;
+      }
+
+      .passport-photo {
+        width: 120px;
+        height: 140px;
+        object-fit: cover;
+        border-radius: 8px;
+        border: 1px solid #d8dfeb;
+        background: white;
+      }
+
+      .passport-no-photo {
+        width: 120px;
+        height: 140px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        text-align: center;
+        border: 1px dashed #bac5d6;
+        border-radius: 8px;
+        color: #667085;
+        font-size: 12px;
+        padding: 8px;
+        box-sizing: border-box;
+      }
+
+      .passport-student-info {
+        padding: 13px;
+        min-width: 0;
+      }
+
+      .passport-student-info h3 {
+        font-size: 15px;
+        margin: 0 0 7px;
+        overflow-wrap: anywhere;
+      }
+
+      .passport-student-info p {
+        font-size: 12px;
+        margin: 5px 0;
+        color: #5b6576;
+        overflow-wrap: anywhere;
+      }
+
+      .passport-status {
+        display: inline-block;
+        border-radius: 20px;
+        padding: 5px 9px;
+        font-size: 11px;
+        font-weight: 700;
+        margin: 3px 0 10px;
+      }
+
+      .passport-status.complete {
+        background: #e3f6e9;
+        color: #176534;
+      }
+
+      .passport-status.missing {
+        background: #fff0d7;
+        color: #855000;
+      }
+
+      .passport-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 10px;
+      }
+
+      .passport-action {
+        border: 0;
+        border-radius: 8px;
+        padding: 10px 12px;
+        cursor: pointer;
+        font-size: 13px;
+        font-weight: 600;
+        touch-action: manipulation;
+      }
+
+      .passport-action:disabled {
+        opacity: .55;
+        cursor: not-allowed;
+      }
+
+      .passport-primary {
+        background: #2457b8;
+        color: #fff;
+      }
+
+      .passport-danger {
+        background: #fff0f0;
+        color: #a32323;
+        border: 1px solid #efc6c6;
+      }
+
+      .passport-notice {
+        display: none;
+        margin: 0 0 14px;
+        padding: 12px;
+        border-radius: 9px;
+        overflow-wrap: anywhere;
+        white-space: pre-line;
+        font-size: 14px;
+      }
+
+      .passport-notice.info {
+        background: #edf4ff;
+        color: #214b8f;
+      }
+
+      .passport-notice.success {
+        background: #e7f7ec;
+        color: #176534;
+      }
+
+      .passport-notice.error {
+        background: #fff0f0;
+        color: #9b2525;
+      }
+
+      .passport-empty {
+        padding: 26px 12px;
+        text-align: center;
+        color: #667085;
+        border: 1px dashed #d5dce7;
+        border-radius: 10px;
+      }
+
+      .passport-file-input {
+        display: none;
+      }
+
+      @media (max-width: 520px) {
+        .passport-page {
+          padding: 9px;
+        }
+
+        .passport-panel {
+          padding: 12px;
+        }
+
+        .passport-student-card {
+          flex-basis: min(86vw, 360px);
+          display: grid;
+          grid-template-columns: 112px minmax(0, 1fr);
+        }
+
+        .passport-photo-area {
+          min-height: 0;
+          padding: 8px;
+        }
+
+        .passport-photo {
+          width: 94px;
+          height: 118px;
+        }
+
+        .passport-no-photo {
+          width: 94px;
+          height: 118px;
+        }
+
+        .passport-student-info {
+          padding: 10px;
+        }
+
+        .passport-actions {
+          flex-direction: column;
+        }
+
+        .passport-action {
+          width: 100%;
+          box-sizing: border-box;
+        }
+
+        .passport-scroll-controls span {
+          font-size: 11px;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .passport-student-grid {
+          scroll-behavior: auto;
+        }
       }
     `;
+
     document.head.appendChild(style);
   }
 
   function ensureContainer() {
     var tab = document.getElementById('passportRegistrationTab');
+
     if (!tab) {
       throw new Error('Passport tab container is missing from index.html.');
     }
@@ -156,18 +492,28 @@
               Register and manage official student passport photographs.
             </div>
           </div>
-          <button type="button" class="passport-action passport-primary"
-            id="passportRefreshBtn">Refresh records</button>
+
+          <button type="button"
+            class="passport-action passport-primary"
+            id="passportRefreshBtn">
+            Refresh records
+          </button>
         </div>
 
-        <div id="passportNotice" class="passport-notice"
-          role="status" aria-live="polite"></div>
+        <div id="passportNotice"
+          class="passport-notice"
+          role="status"
+          aria-live="polite"></div>
 
         <section class="passport-panel">
-          <h3 style="margin:0 0 5px;font-size:16px;">Select class and arm</h3>
+          <h3 style="margin:0 0 5px;font-size:16px;">
+            Select class and arm
+          </h3>
+
           <p class="passport-muted" style="margin:0 0 13px;">
             Choose the student's current class to display its official register.
           </p>
+
           <div id="passportClassGrid" class="passport-class-grid">
             <div class="passport-empty">Loading classes…</div>
           </div>
@@ -175,19 +521,57 @@
 
         <section class="passport-panel">
           <div class="passport-toolbar">
-            <input id="passportStudentSearch" class="passport-search"
-              type="search" placeholder="Search student name, SID or admission number"
+            <input id="passportStudentSearch"
+              class="passport-search"
+              type="search"
+              placeholder="Search student name, SID or admission number"
               aria-label="Search students">
-            <span id="passportStudentCount" class="passport-count"></span>
+
+            <span id="passportStudentCount"
+              class="passport-count"></span>
           </div>
-          <div id="passportStudentGrid" class="passport-student-grid">
-            <div class="passport-empty">Select a class to view students.</div>
+
+          <div class="passport-student-scroller">
+            <div class="passport-scroll-controls">
+              <button type="button"
+                id="passportStudentsPrev"
+                class="passport-scroll-button"
+                aria-label="Previous students"
+                title="Previous students"
+                disabled>
+                ‹
+              </button>
+
+              <span>
+                Swipe or use the arrows to view students in this class/arm.
+              </span>
+
+              <button type="button"
+                id="passportStudentsNext"
+                class="passport-scroll-button"
+                aria-label="Next students"
+                title="Next students"
+                disabled>
+                ›
+              </button>
+            </div>
+
+            <div id="passportStudentGrid"
+              class="passport-student-grid"
+              tabindex="0"
+              aria-label="Students in selected class or arm">
+              <div class="passport-empty">
+                Select a class to view students.
+              </div>
+            </div>
           </div>
         </section>
       </div>
 
-      <input id="passportUploadInput" class="passport-file-input"
-        type="file" accept="image/jpeg,image/png,image/webp">
+      <input id="passportUploadInput"
+        class="passport-file-input"
+        type="file"
+        accept="image/jpeg,image/png,image/webp">
     `;
 
     document.getElementById('passportRefreshBtn').onclick = function () {
@@ -199,17 +583,38 @@
       renderPassportStudents();
     };
 
+    document.getElementById('passportStudentsPrev').onclick = function () {
+      scrollPassportStudents(-1);
+    };
+
+    document.getElementById('passportStudentsNext').onclick = function () {
+      scrollPassportStudents(1);
+    };
+
+    document.getElementById('passportStudentGrid').onscroll = function () {
+      updatePassportScrollButtons();
+    };
+
     document.getElementById('passportClassGrid').onclick = function (event) {
       var button = event.target.closest('[data-passport-class]');
+
       if (!button) return;
 
-      state.selectedClassId = button.getAttribute('data-passport-class');
+      var newClassId = button.getAttribute('data-passport-class');
+
+      if (String(newClassId) === String(state.selectedClassId)) return;
+
+      state.selectedClassId = newClassId;
+      state.students = [];
+
       renderPassportClasses();
+      renderPassportStudents();
       loadPassportStudents();
     };
 
     document.getElementById('passportStudentGrid').onclick = function (event) {
       var button = event.target.closest('[data-passport-action]');
+
       if (!button || state.busy) return;
 
       var studentId = button.getAttribute('data-student-id');
@@ -219,6 +624,7 @@
         var student = state.students.find(function (item) {
           return String(item.student.id) === String(studentId);
         });
+
         if (!student) return;
 
         if (action === 'replace' && !confirm(
@@ -226,6 +632,7 @@
         )) return;
 
         var input = document.getElementById('passportUploadInput');
+
         input.value = '';
         input.dataset.studentId = studentId;
         input.dataset.replace = action === 'replace' ? 'yes' : 'no';
@@ -241,6 +648,7 @@
       var file = this.files && this.files[0];
       var studentId = this.dataset.studentId;
       var isReplacement = this.dataset.replace === 'yes';
+
       if (!file || !studentId) return;
 
       await uploadStudentPassport(studentId, file, isReplacement);
@@ -248,6 +656,46 @@
     };
 
     installBulkPassportControls();
+    updatePassportScrollButtons();
+  }
+
+  // Scroll the student register one card at a time.
+  function scrollPassportStudents(direction) {
+    var grid = document.getElementById('passportStudentGrid');
+
+    if (!grid) return;
+
+    var card = grid.querySelector('.passport-student-card');
+
+    var distance = card
+      ? card.getBoundingClientRect().width + 14
+      : Math.max(220, grid.clientWidth * 0.8);
+
+    if (typeof grid.scrollBy === 'function') {
+      grid.scrollBy({
+        left: direction * distance,
+        behavior: 'smooth'
+      });
+    } else {
+      grid.scrollLeft += direction * distance;
+    }
+
+    updatePassportScrollButtons();
+  }
+
+  // Enable or disable the navigation arrows based on scroll position.
+  function updatePassportScrollButtons() {
+    var grid = document.getElementById('passportStudentGrid');
+    var prev = document.getElementById('passportStudentsPrev');
+    var next = document.getElementById('passportStudentsNext');
+
+    if (!grid || !prev || !next) return;
+
+    var maxScroll = Math.max(0, grid.scrollWidth - grid.clientWidth);
+    var hasCards = !!grid.querySelector('.passport-student-card');
+
+    prev.disabled = !hasCards || grid.scrollLeft <= 2;
+    next.disabled = !hasCards || grid.scrollLeft >= maxScroll - 2;
   }
 
   // Bulk passport files are matched to enrolled students by admission number.
@@ -255,6 +703,7 @@
     var heading = document.querySelector(
       '#passportRegistrationTab .passport-heading'
     );
+
     if (!heading || document.getElementById('passportBulkInput')) return;
 
     var button = document.createElement('button');
@@ -290,6 +739,7 @@
 
     input.onchange = async function () {
       var files = Array.from(input.files || []);
+
       if (!files.length) return;
 
       var normalize = function (value) {
@@ -300,11 +750,16 @@
       };
 
       var studentsByAdmission = Object.create(null);
+
       state.students.forEach(function (item) {
         var key = normalize(item.student.admission_number);
+
         if (!key) return;
 
-        if (!studentsByAdmission[key]) studentsByAdmission[key] = [];
+        if (!studentsByAdmission[key]) {
+          studentsByAdmission[key] = [];
+        }
+
         studentsByAdmission[key].push(item);
       });
 
@@ -318,6 +773,7 @@
         var stem = extension
           ? file.name.slice(0, -extension[0].length)
           : file.name;
+
         var key = normalize(stem);
 
         if (!key) {
@@ -329,6 +785,7 @@
           problems.push(file.name + ': duplicate admission-number filename.');
           return;
         }
+
         usedKeys[key] = true;
 
         var candidates = studentsByAdmission[key] || [];
@@ -350,6 +807,7 @@
           problems.push(file.name + ': this student already has another selected image.');
           return;
         }
+
         usedStudents[studentId] = true;
 
         if (item.passport && item.passport.storage_path) {
@@ -370,7 +828,10 @@
           return;
         }
 
-        matches.push({ file: file, item: item });
+        matches.push({
+          file: file,
+          item: item
+        });
       });
 
       if (!matches.length) {
@@ -485,7 +946,10 @@
       }
 
       state.loaded = true;
-      if (showMessage) passportNotice('Passport records refreshed.', 'success');
+
+      if (showMessage) {
+        passportNotice('Passport records refreshed.', 'success');
+      }
     } catch (error) {
       passportNotice(error.message || 'Unable to load passport registration.', 'error');
     }
@@ -493,38 +957,54 @@
 
   function classLevel(name) {
     var value = String(name || '').toUpperCase().replace(/\s+/g, '');
+
     if (value.indexOf('BASIC7') === 0) return 'BASIC 7';
     if (value.indexOf('BASIC8') === 0) return 'BASIC 8';
     if (value.indexOf('BASIC9') === 0) return 'BASIC 9';
     if (value.indexOf('SS1') === 0) return 'SS 1';
     if (value.indexOf('SS2') === 0) return 'SS 2';
     if (value.indexOf('SS3') === 0) return 'SS 3';
+
     return 'Other classes';
   }
 
   function renderPassportClasses() {
     var grid = document.getElementById('passportClassGrid');
+
     if (!grid) return;
 
     if (!state.classes.length) {
-      grid.innerHTML = '<div class="passport-empty">No classes were found for this school.</div>';
+      grid.innerHTML =
+        '<div class="passport-empty">No classes were found for this school.</div>';
       return;
     }
 
     var groups = {};
+
     state.classes.forEach(function (item) {
       var level = classLevel(item.class_name);
+
       if (!groups[level]) groups[level] = [];
+
       groups[level].push(item);
     });
 
-    var order = ['BASIC 7', 'BASIC 8', 'BASIC 9', 'SS 1', 'SS 2', 'SS 3', 'Other classes'];
+    var order = [
+      'BASIC 7',
+      'BASIC 8',
+      'BASIC 9',
+      'SS 1',
+      'SS 2',
+      'SS 3',
+      'Other classes'
+    ];
 
     grid.innerHTML = order.filter(function (level) {
       return groups[level] && groups[level].length;
     }).map(function (level) {
       return groups[level].map(function (item) {
         var selected = String(item.id) === String(state.selectedClassId);
+
         return `
           <button type="button"
             class="passport-class-button ${selected ? 'selected' : ''}"
@@ -539,6 +1019,8 @@
   }
 
   async function loadPassportStudents() {
+    var requestedClassId = state.selectedClassId;
+
     try {
       requireAdmin();
 
@@ -555,20 +1037,28 @@
         .select('*')
         .eq('school_id', authenticatedProfile.school_id)
         .eq('academic_session_id', activeAcademicSession.id)
-        .eq('class_id', state.selectedClassId)
+        .eq('class_id', requestedClassId)
         .order('register_number');
 
       if (enrolmentResult.error) throw enrolmentResult.error;
 
       var enrolments = enrolmentResult.data || [];
+
       var studentIds = enrolments.map(function (row) {
         return row.student_id;
       }).filter(Boolean);
 
       if (!studentIds.length) {
+        if (String(state.selectedClassId) !== String(requestedClassId)) return;
+
         state.students = [];
         renderPassportStudents();
-        passportNotice('There are no enrolled students in this class for the active session.', 'info');
+
+        passportNotice(
+          'There are no enrolled students in this class for the active session.',
+          'info'
+        );
+
         return;
       }
 
@@ -581,6 +1071,7 @@
       if (studentResult.error) throw studentResult.error;
 
       var studentMap = {};
+
       (studentResult.data || []).forEach(function (student) {
         studentMap[String(student.id)] = student;
       });
@@ -594,15 +1085,17 @@
       if (passportResult.error) throw passportResult.error;
 
       var passportMap = {};
+
       (passportResult.data || []).forEach(function (passport) {
         passportMap[String(passport.student_id)] = passport;
       });
 
-      state.students = [];
+      var loadedStudents = [];
 
       for (var i = 0; i < enrolments.length; i++) {
         var enrolment = enrolments[i];
         var student = studentMap[String(enrolment.student_id)];
+
         if (!student) continue;
 
         var passport = passportMap[String(student.id)] || null;
@@ -613,10 +1106,12 @@
             .from(BUCKET)
             .createSignedUrl(passport.storage_path, 3600);
 
-          if (!signed.error && signed.data) imageUrl = signed.data.signedUrl;
+          if (!signed.error && signed.data) {
+            imageUrl = signed.data.signedUrl;
+          }
         }
 
-        state.students.push({
+        loadedStudents.push({
           student: student,
           enrolment: enrolment,
           passport: passport,
@@ -624,24 +1119,39 @@
         });
       }
 
+      // Prevent an older request from overwriting a newly selected class.
+      if (String(state.selectedClassId) !== String(requestedClassId)) return;
+
+      state.students = loadedStudents;
+
       renderPassportStudents();
+
       passportNotice('Class register loaded successfully.', 'success');
     } catch (error) {
+      if (String(state.selectedClassId) !== String(requestedClassId)) return;
+
       state.students = [];
       renderPassportStudents();
-      passportNotice(error.message || 'Could not load the class register.', 'error');
+
+      passportNotice(
+        error.message || 'Could not load the class register.',
+        'error'
+      );
     }
   }
 
   function renderPassportStudents() {
     var grid = document.getElementById('passportStudentGrid');
     var count = document.getElementById('passportStudentCount');
+
     if (!grid || !count) return;
 
     var term = state.search;
+
     var filtered = state.students.filter(function (item) {
       var student = item.student || {};
       var enrolment = item.enrolment || {};
+
       var text = [
         passportName(student),
         student.admission_number,
@@ -652,15 +1162,22 @@
       return !term || text.indexOf(term) !== -1;
     });
 
-    count.textContent = filtered.length + ' of ' + state.students.length + ' students';
+    count.textContent =
+      filtered.length + ' of ' + state.students.length + ' students';
 
     if (!state.selectedClassId) {
-      grid.innerHTML = '<div class="passport-empty">Select a class or arm above to begin.</div>';
+      grid.innerHTML =
+        '<div class="passport-empty">Select a class or arm above to begin.</div>';
+
+      updatePassportScrollButtons();
       return;
     }
 
     if (!filtered.length) {
-      grid.innerHTML = '<div class="passport-empty">No students match your search in this class.</div>';
+      grid.innerHTML =
+        '<div class="passport-empty">No students match your search in this class.</div>';
+
+      updatePassportScrollButtons();
       return;
     }
 
@@ -668,26 +1185,45 @@
       var student = item.student;
       var enrolment = item.enrolment;
       var passport = item.passport;
+
       var hasPassport = !!(passport && passport.storage_path);
+
       var image = item.imageUrl
         ? '<img class="passport-photo" src="' + escapeHtml(item.imageUrl) +
-          '" alt="Passport photograph of ' + escapeHtml(passportName(student)) + '">'
-        : '<div class="passport-no-photo"><span style="font-size:25px">👤</span><span>' +
-          (hasPassport ? 'Preview unavailable' : 'No passport uploaded') + '</span></div>';
+          '" alt="Passport photograph of ' +
+          escapeHtml(passportName(student)) + '">'
+        : '<div class="passport-no-photo">' +
+          '<span style="font-size:25px">👤</span>' +
+          '<span>' +
+          (hasPassport ? 'Preview unavailable' : 'No passport uploaded') +
+          '</span></div>';
 
       var admission = student.admission_number || 'Not recorded';
       var sid = enrolment.sid || enrolment.register_number || '—';
 
       return `
         <article class="passport-student-card">
-          <div class="passport-photo-area">${image}</div>
+          <div class="passport-photo-area">
+            ${image}
+          </div>
+
           <div class="passport-student-info">
             <h3>${escapeHtml(passportName(student))}</h3>
-            <p><strong>Admission No.:</strong> ${escapeHtml(admission)}</p>
-            <p><strong>Student ID:</strong> ${escapeHtml(sid)}</p>
+
+            <p>
+              <strong>Admission No.:</strong>
+              ${escapeHtml(admission)}
+            </p>
+
+            <p>
+              <strong>Student ID:</strong>
+              ${escapeHtml(sid)}
+            </p>
+
             <span class="passport-status ${hasPassport ? 'complete' : 'missing'}">
               ${hasPassport ? 'Passport registered' : 'Passport required'}
             </span>
+
             <div class="passport-actions">
               <button type="button"
                 class="passport-action passport-primary"
@@ -695,30 +1231,38 @@
                 data-student-id="${escapeHtml(student.id)}">
                 ${hasPassport ? 'Replace passport' : 'Upload passport'}
               </button>
+
               ${hasPassport ? `
                 <button type="button"
                   class="passport-action passport-danger"
                   data-passport-action="remove"
                   data-student-id="${escapeHtml(student.id)}">
                   Remove passport
-                </button>` : ''}
+                </button>
+              ` : ''}
             </div>
           </div>
         </article>
       `;
     }).join('');
+
+    // New filtered results start at the beginning of the register.
+    grid.scrollLeft = 0;
+    updatePassportScrollButtons();
   }
 
   async function verifyAdminSession() {
     requireAdmin();
 
     var sessionResult = await supabaseClient.auth.getSession();
+
     if (sessionResult.error || !sessionResult.data ||
         !sessionResult.data.session) {
       throw new Error('Your administrator session has expired. Sign in again.');
     }
 
     var userResult = await supabaseClient.auth.getUser();
+
     if (userResult.error || !userResult.data || !userResult.data.user ||
         String(userResult.data.user.id) !== String(authenticatedProfile.id)) {
       throw new Error('Administrator session verification failed. Sign in again.');
@@ -733,6 +1277,7 @@
     if (profileResult.error) throw profileResult.error;
 
     var profile = profileResult.data;
+
     if (!profile ||
         String(profile.school_id) !== String(authenticatedProfile.school_id) ||
         String(profile.role || '').toLowerCase() !== 'administrator' ||
@@ -761,7 +1306,9 @@
         return String(row.student.id) === String(studentId);
       });
 
-      if (!item) throw new Error('Student record not found. Refresh and try again.');
+      if (!item) {
+        throw new Error('Student record not found. Refresh and try again.');
+      }
 
       var student = item.student;
       var existing = item.passport;
@@ -776,8 +1323,11 @@
 
       if (isReplacement) {
         var expectedCode = admissionCode(student.admission_number);
+
         if (!expectedCode) {
-          throw new Error('This student has no valid admission number for confirmation. Update the student record first.');
+          throw new Error(
+            'This student has no valid admission number for confirmation. Update the student record first.'
+          );
         }
 
         var enteredCode = prompt(
@@ -832,13 +1382,20 @@
       var oldPath = existing && existing.storage_path;
 
       if (oldPath && oldPath !== path) {
-        var removeOld = await supabaseClient.storage.from(BUCKET).remove([oldPath]);
+        var removeOld = await supabaseClient.storage
+          .from(BUCKET)
+          .remove([oldPath]);
+
         if (removeOld.error) {
-          console.warn('The old passport file could not be cleaned up:', removeOld.error.message);
+          console.warn(
+            'The old passport file could not be cleaned up:',
+            removeOld.error.message
+          );
         }
       }
 
       passportNotice('Passport photograph saved successfully.', 'success');
+
       await loadPassportStudents();
     } catch (error) {
       passportNotice(error.message || 'Passport upload failed.', 'error');
@@ -867,8 +1424,12 @@
     )) return;
 
     var expectedCode = admissionCode(student.admission_number);
+
     if (!expectedCode) {
-      passportNotice('This student has no valid admission number for confirmation.', 'error');
+      passportNotice(
+        'This student has no valid admission number for confirmation.',
+        'error'
+      );
       return;
     }
 
@@ -880,7 +1441,10 @@
     if (enteredCode === null) return;
 
     if (enteredCode.trim().toUpperCase() !== expectedCode) {
-      passportNotice('Confirmation code is incorrect. Passport was not removed.', 'error');
+      passportNotice(
+        'Confirmation code is incorrect. Passport was not removed.',
+        'error'
+      );
       return;
     }
 
@@ -903,10 +1467,14 @@
         .remove([item.passport.storage_path]);
 
       if (fileResult.error) {
-        console.warn('Passport record removed, but file cleanup failed:', fileResult.error.message);
+        console.warn(
+          'Passport record removed, but file cleanup failed:',
+          fileResult.error.message
+        );
       }
 
       passportNotice('Passport registration removed.', 'success');
+
       await loadPassportStudents();
     } catch (error) {
       passportNotice(error.message || 'Passport removal failed.', 'error');
@@ -925,9 +1493,13 @@
       loadPassportRegistration(false);
     } catch (error) {
       var tab = document.getElementById('passportRegistrationTab');
+
       if (tab) {
-        tab.innerHTML = '<div class="passport-page"><div class="passport-notice error" style="display:block">' +
-          escapeHtml(error.message) + '</div></div>';
+        tab.innerHTML =
+          '<div class="passport-page">' +
+          '<div class="passport-notice error" style="display:block">' +
+          escapeHtml(error.message) +
+          '</div></div>';
       }
     }
   };
