@@ -74,7 +74,7 @@
     }
 
     if (currentUser.type !== 'admin' ||
-        String(authenticatedProfile.role || '').toLowerCase() !== 'admin' ||
+        String(authenticatedProfile.role || '').toLowerCase() !== 'administrator' ||
         authenticatedProfile.is_active !== true ||
         !authenticatedProfile.school_id) {
       throw new Error('Only an active school administrator can manage passports.');
@@ -536,7 +536,7 @@
     var profile = profileResult.data;
     if (!profile ||
         String(profile.school_id) !== String(authenticatedProfile.school_id) ||
-        String(profile.role || '').toLowerCase() !== 'admin' ||
+        String(profile.role || '').toLowerCase() !== 'administrator' ||
         profile.is_active !== true) {
       throw new Error('Administrator authorization could not be verified.');
     }
