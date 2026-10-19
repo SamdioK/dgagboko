@@ -606,7 +606,7 @@
           </div>
         </section>
 
-        <section class="passport-panel">
+        <section class="passport-panel" id="passportStudentPanel" hidden>
           <div class="passport-toolbar">
             <input id="passportStudentSearch"
               class="passport-search"
@@ -646,11 +646,7 @@
             <div id="passportStudentGrid"
               class="passport-student-grid"
               tabindex="0"
-              aria-label="Students in selected class or arm">
-              <div class="passport-empty">
-                Select a class to view students.
-              </div>
-            </div>
+              aria-label="Students in selected class or arm"></div>
           </div>
         </section>
       </div>
@@ -1196,7 +1192,31 @@
       `;
     }
 
+    var studentPanel = document.getElementById('passportStudentPanel');
+
+    if (studentPanel) {
+      studentPanel.remove();
+    }
+
     grid.innerHTML = html;
+
+    if (studentPanel && state.selectedClassId) {
+      var selectedArm = grid.querySelector(
+        '[data-passport-class="' + state.selectedClassId + '"]'
+      );
+
+      if (selectedArm) {
+        var selectedLevel = selectedArm.closest('.passport-class-level');
+        var armsContainer = selectedLevel
+          ? selectedLevel.querySelector('.passport-class-arms')
+          : null;
+
+        if (armsContainer) {
+          armsContainer.insertAdjacentElement('afterend', studentPanel);
+          studentPanel.hidden = false;
+        }
+      }
+    }
   }
 
   async function loadPassportStudents() {
@@ -1347,9 +1367,8 @@
       filtered.length + ' of ' + state.students.length + ' students';
 
     if (!state.selectedClassId) {
-      grid.innerHTML =
-        '<div class="passport-empty">Select a class or arm above to begin.</div>';
-
+      count.textContent = '';
+      grid.innerHTML = '';
       updatePassportScrollButtons();
       return;
     }
