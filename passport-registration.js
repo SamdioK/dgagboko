@@ -134,40 +134,127 @@
 
       .passport-class-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(min(100%, 145px), 1fr));
-        gap: 10px;
+        gap: 18px;
+        min-width: 0;
       }
 
-      .passport-class-button {
+      .passport-class-picker-group {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px;
+      }
+
+      .passport-class-level {
+        min-width: 0;
+        padding: 12px;
+        border: 1px solid #e1e6f2;
+        border-radius: 12px;
+        background: linear-gradient(180deg, #f8faff, #fff);
+        box-shadow: 0 3px 10px rgba(42, 61, 112, .07);
+      }
+
+      .passport-class-level-banner {
         display: block;
         width: 100%;
-        min-width: 0;
-        text-align: left;
-        border: 1px solid #d6dfed;
-        background: #f8faff;
-        border-radius: 10px;
-        padding: 12px;
-        cursor: pointer;
-        color: #23324c;
-        overflow-wrap: anywhere;
-      }
-
-      .passport-class-button strong {
-        display: block;
+        box-sizing: border-box;
+        padding: 10px 12px;
+        border: 0;
+        border-radius: 8px;
+        background: linear-gradient(120deg, #536bd8, #7352a6);
+        color: #fff;
+        text-align: center;
         font-size: 14px;
+        font-weight: 700;
+        letter-spacing: .04em;
+        box-shadow: 0 3px 8px rgba(66, 76, 151, .2);
       }
 
-      .passport-class-button small {
-        display: block;
-        margin-top: 4px;
-        color: #667085;
+      .passport-class-picker-group.senior
+      .passport-class-level-banner {
+        background: linear-gradient(120deg, #13827c, #3068a7);
       }
 
-      .passport-class-button.selected {
-        background: #eaf1ff;
-        border: 2px solid #315fc4;
-        padding: 11px;
-        color: #173f91;
+      .passport-class-arms {
+        display: flex;
+        justify-content: center;
+        align-items: flex-start;
+        flex-wrap: wrap;
+        gap: 8px;
+        padding-top: 2px;
+      }
+
+      .passport-class-arm {
+        position: relative;
+        min-width: 42px;
+        margin-top: 13px;
+        padding: 9px 12px;
+        border: 1px solid #d9e1f2;
+        border-radius: 9px;
+        background: #fff;
+        color: #34436f;
+        font-size: 13px;
+        font-weight: 700;
+        cursor: pointer;
+        box-shadow: 0 3px 8px rgba(34, 51, 94, .1);
+        transition: transform .16s ease,
+          box-shadow .16s ease,
+          border-color .16s ease,
+          background .16s ease;
+      }
+
+      .passport-class-arm::before {
+        position: absolute;
+        top: -14px;
+        left: 50%;
+        width: 2px;
+        height: 14px;
+        background: #9aa7c0;
+        content: '';
+        transform: translateX(-50%);
+      }
+
+      .passport-class-arm:hover {
+        transform: translateY(2px);
+        border-color: #7588db;
+        box-shadow: 0 5px 12px rgba(34, 51, 94, .16);
+      }
+
+      .passport-class-arm.selected {
+        border-color: #4c62ca;
+        background: #e9edff;
+        color: #293eaa;
+        box-shadow: 0 0 0 2px rgba(76, 98, 202, .18),
+          0 4px 10px rgba(34, 51, 94, .12);
+      }
+
+      .passport-class-arm:focus-visible {
+        outline: 3px solid #f0b429;
+        outline-offset: 2px;
+      }
+
+      .passport-class-other {
+        margin-top: 12px;
+      }
+
+      .passport-class-other .passport-class-arms {
+        justify-content: flex-start;
+      }
+
+      @media (max-width: 768px) {
+        .passport-class-picker-group {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 9px;
+        }
+      }
+
+      @media (max-width: 420px) {
+        .passport-class-picker-group {
+          grid-template-columns: 1fr;
+        }
+
+        .passport-class-level {
+          padding: 10px;
+        }
       }
 
       .passport-toolbar {
@@ -970,52 +1057,146 @@
 
   function renderPassportClasses() {
     var grid = document.getElementById('passportClassGrid');
-
     if (!grid) return;
 
     if (!state.classes.length) {
       grid.innerHTML =
-        '<div class="passport-empty">No classes were found for this school.</div>';
+        '<div class="passport-empty">' +
+        'No classes were found for this school.' +
+        '</div>';
       return;
     }
 
-    var groups = {};
-
-    state.classes.forEach(function (item) {
-      var level = classLevel(item.class_name);
-
-      if (!groups[level]) groups[level] = [];
-
-      groups[level].push(item);
-    });
-
-    var order = [
-      'BASIC 7',
-      'BASIC 8',
-      'BASIC 9',
-      'SS 1',
-      'SS 2',
-      'SS 3',
-      'Other classes'
+    var levels = [
+      { key: 'BASIC7', label: 'BASIC 7', group: 'basic' },
+      { key: 'BASIC8', label: 'BASIC 8', group: 'basic' },
+      { key: 'BASIC9', label: 'BASIC 9', group: 'basic' },
+      { key: 'SS1', label: 'SS 1', group: 'senior' },
+      { key: 'SS2', label: 'SS 2', group: 'senior' },
+      { key: 'SS3', label: 'SS 3', group: 'senior' }
     ];
 
-    grid.innerHTML = order.filter(function (level) {
-      return groups[level] && groups[level].length;
-    }).map(function (level) {
-      return groups[level].map(function (item) {
-        var selected = String(item.id) === String(state.selectedClassId);
+    var grouped = {};
+    var otherClasses = [];
+
+    levels.forEach(function (level) {
+      grouped[level.key] = [];
+    });
+
+    state.classes.forEach(function (item) {
+      var name = String(item.class_name || '')
+        .toUpperCase()
+        .replace(/\s+/g, '');
+
+      var level = levels.find(function (candidate) {
+        return name.indexOf(candidate.key) === 0;
+      });
+
+      if (level) {
+        grouped[level.key].push(item);
+      } else {
+        otherClasses.push(item);
+      }
+    });
+
+    function renderLevel(level) {
+      var arms = grouped[level.key].slice().sort(function (a, b) {
+        return String(a.class_name).localeCompare(
+          String(b.class_name),
+          undefined,
+          { numeric: true }
+        );
+      });
+
+      var buttons = arms.map(function (item) {
+        var name = String(item.class_name || '')
+          .toUpperCase()
+          .replace(/\s+/g, '');
+
+        var armLabel = name.indexOf(level.key) === 0
+          ? name.slice(level.key.length)
+          : item.class_name;
+
+        var selected =
+          String(item.id) === String(state.selectedClassId);
 
         return `
-          <button type="button"
-            class="passport-class-button ${selected ? 'selected' : ''}"
+          <button
+            type="button"
+            class="passport-class-arm${selected ? ' selected' : ''}"
             data-passport-class="${escapeHtml(item.id)}"
-            aria-pressed="${selected}">
-            <strong>${escapeHtml(item.class_name)}</strong>
-            <small>${selected ? 'Selected class' : 'Select class / arm'}</small>
-          </button>
+            aria-pressed="${selected}"
+            aria-label="Select ${escapeHtml(item.class_name)}"
+            title="${escapeHtml(item.class_name)}"
+          >${escapeHtml(armLabel || item.class_name)}</button>
         `;
       }).join('');
-    }).join('');
+
+      return `
+        <section class="passport-class-level"
+          aria-label="${escapeHtml(level.label)} class arms">
+
+          <div class="passport-class-level-banner">
+            ${escapeHtml(level.label)}
+          </div>
+
+          <div class="passport-class-arms">
+            ${buttons || '<span class="passport-muted">No arms available</span>'}
+          </div>
+        </section>
+      `;
+    }
+
+    var html = '';
+
+    html += '<div class="passport-class-picker-group basic">';
+
+    levels.filter(function (level) {
+      return level.group === 'basic';
+    }).forEach(function (level) {
+      html += renderLevel(level);
+    });
+
+    html += '</div>';
+
+    html += '<div class="passport-class-picker-group senior">';
+
+    levels.filter(function (level) {
+      return level.group === 'senior';
+    }).forEach(function (level) {
+      html += renderLevel(level);
+    });
+
+    html += '</div>';
+
+    if (otherClasses.length) {
+      html += `
+        <section class="passport-class-level passport-class-other">
+          <div class="passport-class-level-banner">
+            Other Classes
+          </div>
+
+          <div class="passport-class-arms">
+            ${otherClasses.map(function (item) {
+              var selected =
+                String(item.id) === String(state.selectedClassId);
+
+              return `
+                <button
+                  type="button"
+                  class="passport-class-arm${selected ? ' selected' : ''}"
+                  data-passport-class="${escapeHtml(item.id)}"
+                  aria-pressed="${selected}"
+                  aria-label="Select ${escapeHtml(item.class_name)}"
+                >${escapeHtml(item.class_name)}</button>
+              `;
+            }).join('')}
+          </div>
+        </section>
+      `;
+    }
+
+    grid.innerHTML = html;
   }
 
   async function loadPassportStudents() {
