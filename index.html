@@ -99,9 +99,6 @@ th { background: #f5f5f5; font-weight: 600; }
 .student-class-arm::before { position: absolute; top: -14px; left: 50%; width: 2px; height: 14px; background: #9aa7c0; content: ''; transform: translateX(-50%); }
 .student-class-arm:hover { transform: translateY(2px); border-color: #7588db; box-shadow: 0 5px 12px rgba(34, 51, 94, .16); }
 .student-class-arm.selected { border-color: #4c62ca; background: #e9edff; color: #293eaa; box-shadow: 0 0 0 2px rgba(76, 98, 202, .18), 0 4px 10px rgba(34, 51, 94, .12); }
-.student-class-arm.assigned { border-color: #b8dfc1; background: #eff9f1; color: #23753b; }
-.student-class-arm.unassigned { border-color: #e0e0e0; background: #f5f5f5; color: #777; }
-.student-class-arm.assigned.selected { border-color: #4c62ca; background: #e9edff; color: #293eaa; }
 .student-class-arm:focus-visible { outline: 3px solid #f0b429; outline-offset: 2px; }
 .student-class-native-select { position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important; overflow: hidden !important; clip: rect(0, 0, 0, 0) !important; white-space: nowrap !important; border: 0 !important; }
  .student-class-other { margin-top: 12px; }
@@ -440,7 +437,6 @@ var currentUser = null;
 var currentSchool = null;
 var classArms = [];
 var formMasters = [];
-var formMasterGenderByName = {};
 var subjectAssignments = [];
 var students = [];
 var selectedSubjects = [];
@@ -950,7 +946,7 @@ async function handleSupabaseLogin(userType, errorDiv) {
     var authResult = await supabaseClient.auth.signInWithPassword({ email: email, password: password });
     if (authResult.error || !authResult.data || !authResult.data.user) throw authResult.error || new Error('Sign-in failed.');
     var profileResult = await supabaseClient.from('profiles')
-      .select('id,school_id,full_name,username,email,role,is_active,must_change_password,gender')
+      .select('id,school_id,full_name,username,email,role,is_active,must_change_password')
       .eq('id', authResult.data.user.id).maybeSingle();
     if (profileResult.error) throw profileResult.error;
     var profile = profileResult.data;
@@ -1835,7 +1831,7 @@ function renderStudentResults() {
 }
 
 // ===================== SUPABASE STUDENT DATABASE =====================
-var studentDbState = { classes: [], assignedClasses: [], official: [], pending: [], requests: [], importRows: [], activeClassId: '', view: 'official', officialPanelMinimized: false, officialPanelClosed: false, draftRows: [], existingStudentSearchResults: [], selectedExistingStudentId: '', activeResubmissions: {}, activeProvisioning: {}, activePasswordResets: {}, activeChangeReviewRequestId: null, studentCorrectionRealtimeChannel: null, studentCorrectionRealtimeStarted: false, studentCorrectionRealtimeTimers: {} };
+var studentDbState = { classes: [], assignedClasses: [], official: [], pending: [], requests: [], classListChanges: [], importRows: [], activeClassId: '', view: 'official', officialPanelMinimized: false, officialPanelClosed: false, draftRows: [], existingStudentSearchResults: [], selectedExistingStudentId: '', activeResubmissions: {}, activeProvisioning: {}, activePasswordResets: {}, activeChangeReviewRequestId: null, studentCorrectionRealtimeChannel: null, studentCorrectionRealtimeStarted: false, studentCorrectionRealtimeTimers: {} };
 
 function stopStudentCorrectionRealtime() {
   if (studentDbState.studentCorrectionRealtimeChannel && supabaseClient) {
@@ -2149,6 +2145,97 @@ async function loadPendingStudentApprovals() {
   studentDbState.pending = (result.data || []).map(function(row) { var batch = batchMap[String(row.batch_id)] || {}; var submitterId = row.submitted_by || batch.submitted_by; return Object.assign({}, row, { class_id: row.class_id || batch.class_id, submitted_by: submitterNames[String(submitterId)] || submitterId, submission_type: row.submission_type || batch.submission_type }); });
 }
 
+async function loadClassListChangeRequests() {
+  var result = await supabaseClient
+    .from('class_list_change_requests')
+    .select('*')
+    .eq('school_id', authenticatedProfile.school_id)
+    .order('requested_at', { ascending: false });
+
+  if (result.error) {
+    studentDbThrowQueryError(
+      result.error,
+      'Load class-list change requests'
+    );
+  }
+
+  studentDbState.classListChanges = result.data || [];
+}
+
+function renderClassListChangePanel(isAdmin) {
+  var requests = studentDbState.classListChanges || [];
+
+  var rows = requests.map(function (request) {
+    var className = studentDbClassLabel(request.class_id);
+    var status = String(request.status || 'pending').toLowerCase();
+
+    var actions = '—';
+
+    if (isAdmin && status === 'pending') {
+      actions =
+        '<button type="button" class="btn btn-success class-list-review" ' +
+        'data-id="' + escapeManagementText(request.id) +
+        '" data-decision="approve">Approve</button> ' +
+        '<button type="button" class="btn btn-danger class-list-review" ' +
+        'data-id="' + escapeManagementText(request.id) +
+        '" data-decision="reject">Reject</button>';
+    }
+
+    return '<tr>' +
+      '<td>' + escapeManagementText(className) + '</td>' +
+      '<td>' + escapeManagementText(request.action) + '</td>' +
+      '<td>' + escapeManagementText(request.reason) + '</td>' +
+      '<td>' + escapeManagementText(request.status) + '</td>' +
+      '<td>' + escapeManagementText(request.administrator_note || '—') + '</td>' +
+      '<td>' + actions + '</td>' +
+      '</tr>';
+  }).join('');
+
+  var form = '';
+
+  if (!isAdmin) {
+    form =
+      '<div class="card" style="margin-bottom:16px">' +
+      '<h3>Request Official Class-List Clearance</h3>' +
+      '<p class="alert alert-info">' +
+      'Your request will not change the official list immediately. ' +
+      'An active School Administrator must review it. ' +
+      'Replacement requests cannot yet be approved because staged ' +
+      'replacement-list validation has not been implemented.' +
+      '</p>' +
+      '<div class="input-group"><label for="classListChangeClass">Assigned class *</label>' +
+      '<select id="classListChangeClass">' +
+      '<option value="">Select class</option>' +
+      studentDbClassOptions() +
+      '</select></div>' +
+      '<div class="input-group"><label for="classListChangeAction">Requested action *</label>' +
+      '<select id="classListChangeAction">' +
+      '<option value="clear">Clear the official class list</option>' +
+      '<option value="replace" disabled>Replace the official list (not yet available)</option>' +
+      '</select></div>' +
+      '<div class="input-group"><label for="classListChangeReason">Reason (at least 15 characters) *</label>' +
+      '<textarea id="classListChangeReason" rows="3" maxlength="1000"></textarea></div>' +
+      '<label style="display:block;margin:12px 0">' +
+      '<input type="checkbox" id="classListChangeConfirm"> ' +
+      'I understand that approval will remove the enrolments for this class ' +
+      'and academic session, and I have verified the class and session.' +
+      '</label>' +
+      '<button type="button" class="btn btn-danger" id="submitClassListChange">' +
+      'Submit Request for Administrator Approval</button>' +
+      '<div id="classListChangeStatus" role="status" aria-live="polite"></div>' +
+      '</div>';
+  }
+
+  return form +
+    '<h3>' + (isAdmin ? 'Class-List Change Requests for Review' : 'My Class-List Change Requests') + '</h3>' +
+    '<div style="overflow-x:auto"><table><thead><tr>' +
+    '<th>Class</th><th>Action</th><th>Reason</th><th>Status</th>' +
+    '<th>Administrator Note</th><th>Review</th>' +
+    '</tr></thead><tbody>' +
+    (rows || '<tr><td colspan="6">No class-list change requests found.</td></tr>') +
+    '</tbody></table></div>';
+}
+
 async function loadStudentChangeRequests() {
   var result = await supabaseClient.from('student_change_requests').select('*').eq('school_id', authenticatedProfile.school_id).order('created_at', { ascending: false });
   if (result.error) studentDbThrowQueryError(result.error, "SELECT * FROM student_change_requests WHERE school_id = authenticatedProfile.school_id ORDER BY created_at DESC");
@@ -2188,9 +2275,17 @@ function renderStudentDatabase() {
   container.innerHTML = '<div class="card"><h2>Student Database</h2><p id="studentDbLoading" class="alert alert-info">Loading classes and student records…</p><div id="studentDbWorkspace"></div></div>';
   loadStudentDatabase().then(async function() {
     if (currentUser.type === 'admin') {
-      await Promise.all([loadPendingStudentApprovals(), loadStudentChangeRequests()]);
+      await Promise.all([
+        loadPendingStudentApprovals(),
+        loadStudentChangeRequests(),
+        loadClassListChangeRequests()
+      ]);
     } else {
-      await Promise.all([loadFormMasterSubmissions(), loadFormMasterChangeRequests()]);
+      await Promise.all([
+        loadFormMasterSubmissions(),
+        loadFormMasterChangeRequests(),
+        loadClassListChangeRequests()
+      ]);
     }
     if (studentDbState.activeClassId) await loadOfficialStudents(studentDbState.activeClassId);
     renderStudentDatabaseWorkspace();
@@ -2221,8 +2316,19 @@ function renderStudentDatabaseWorkspace() {
   var workspace = document.getElementById('studentDbWorkspace');
   if (!workspace) return;
   var isAdmin = currentUser.type === 'admin';
-  var tabs = isAdmin ? ['official', 'pending', 'requests', 'enrolExisting'] : ['official', 'submit', 'submissions', 'corrections'];
-  var titles = { official: 'Official Students', pending: 'Pending Approvals', requests: 'Change Requests', enrolExisting: 'Enrol Existing Student', submit: 'Add / Upload Students', submissions: 'My Submissions', corrections: 'Request Correction' };
+  var tabs = isAdmin
+    ? ['official', 'pending', 'requests', 'classListChanges', 'enrolExisting']
+    : ['official', 'submit', 'submissions', 'corrections', 'classListChanges'];
+  var titles = {
+    official: 'Official Students',
+    pending: 'Pending Approvals',
+    requests: 'Change Requests',
+    classListChanges: 'Class-List Changes',
+    enrolExisting: 'Enrol Existing Student',
+    submit: 'Add / Upload Students',
+    submissions: 'My Submissions',
+    corrections: 'Request Correction'
+  };
   if (tabs.indexOf(studentDbState.view) === -1) studentDbState.view = tabs[0];
   var html = '<p style="margin:4px 0 12px;color:#555"><strong>Academic Session:</strong> ' + escapeManagementText(activeAcademicSession.name) + '</p><div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">' + tabs.map(function(tab) {
     return '<button class="btn ' + (studentDbState.view === tab ? 'btn-primary' : '') + ' student-db-tab" data-view="' + tab + '" style="' + (studentDbState.view !== tab ? 'background:#eee' : '') + '">' + titles[tab] + '</button>';
@@ -2234,6 +2340,7 @@ function renderStudentDatabaseWorkspace() {
   if (studentDbState.view === 'requests') html += renderAdminChangeRequests();
   if (studentDbState.view === 'enrolExisting') html += renderExistingStudentEnrolmentPanel();
   if (studentDbState.view === 'corrections') html += renderCorrectionPanel();
+  if (studentDbState.view === 'classListChanges') html += renderClassListChangePanel(isAdmin);
   workspace.innerHTML = html;
   workspace.querySelectorAll('.student-db-tab').forEach(function(button) { button.addEventListener('click', function() { studentDbState.view = button.dataset.view; renderStudentDatabaseWorkspace(); }); });
   bindOfficialStudentLoginEvents(workspace);
@@ -3725,6 +3832,135 @@ function openInlineStudentCorrection(root, student) {
 }
 
 function bindStudentDatabaseEvents(root) {
+  var classListSubmit = root.querySelector('#submitClassListChange');
+
+  if (classListSubmit) {
+    classListSubmit.addEventListener('click', async function () {
+      var classId = root.querySelector('#classListChangeClass').value;
+      var action = root.querySelector('#classListChangeAction').value;
+      var reason = root.querySelector('#classListChangeReason').value.trim();
+      var confirmed = root.querySelector('#classListChangeConfirm').checked;
+      var status = root.querySelector('#classListChangeStatus');
+
+      if (!classId) {
+        status.className = 'alert alert-error';
+        status.textContent = 'Select an assigned class first.';
+        return;
+      }
+
+      if (reason.length < 15) {
+        status.className = 'alert alert-error';
+        status.textContent = 'Give a reason of at least 15 characters.';
+        return;
+      }
+
+      if (!confirmed) {
+        status.className = 'alert alert-error';
+        status.textContent = 'Confirm that you understand the effect of approval.';
+        return;
+      }
+
+      if (action !== 'clear') {
+        status.className = 'alert alert-error';
+        status.textContent = 'Replacement requests are not enabled yet.';
+        return;
+      }
+
+      if (!confirm(
+        'Submit a request to clear this class list for academic session ' +
+        activeAcademicSession.name +
+        '? The official list will remain unchanged until an administrator approves.'
+      )) return;
+
+      classListSubmit.disabled = true;
+      status.className = 'alert alert-info';
+      status.textContent = 'Submitting request…';
+
+      try {
+        var result = await supabaseClient.rpc('request_class_list_change', {
+          p_class_id: classId,
+          p_academic_session_id: activeAcademicSession.id,
+          p_action: action,
+          p_reason: reason,
+          p_confirmed: true
+        });
+
+        if (result.error) throw result.error;
+
+        await loadClassListChangeRequests();
+        renderStudentDatabaseWorkspace();
+        showToast('Class-list change request submitted for administrator review.', 'success');
+      } catch (error) {
+        status.className = 'alert alert-error';
+        status.textContent = error.message ||
+          'Request failed. Check your assignment and try again.';
+        classListSubmit.disabled = false;
+      }
+    });
+  }
+
+  root.querySelectorAll('.class-list-review').forEach(function (button) {
+    button.addEventListener('click', async function () {
+      var decision = button.dataset.decision;
+      var requestId = button.dataset.id;
+      var note = '';
+
+      if (decision === 'reject') {
+        note = prompt('Enter the reason for rejecting this request:') || '';
+        if (note.trim().length < 5) {
+          alert('A rejection reason of at least 5 characters is required.');
+          return;
+        }
+      } else {
+        var request = (studentDbState.classListChanges || []).find(function (item) {
+          return String(item.id) === String(requestId);
+        });
+
+        if (!request) {
+          alert('Request not found. Refresh the Student Database.');
+          return;
+        }
+
+        if (request.action === 'replace') {
+          alert('Replacement approval is disabled until a replacement list can be staged and validated.');
+          return;
+        }
+
+        if (!confirm(
+          'Approve clearing this class list? This will delete its enrolments ' +
+          'for the requested academic session. Student master records will not be deleted.'
+        )) return;
+      }
+
+      button.disabled = true;
+
+      try {
+        var result = await supabaseClient.rpc('review_class_list_change', {
+          p_request_id: requestId,
+          p_decision: decision,
+          p_administrator_note: note
+        });
+
+        if (result.error) throw result.error;
+
+        await loadClassListChangeRequests();
+
+        if (studentDbState.activeClassId) {
+          await loadOfficialStudents(studentDbState.activeClassId);
+        }
+
+        renderStudentDatabaseWorkspace();
+        showToast(
+          decision === 'approve' ? 'Class-list request approved.' : 'Class-list request rejected.',
+          'success'
+        );
+      } catch (error) {
+        button.disabled = false;
+        alert(error.message || 'Unable to process the class-list request.');
+      }
+    });
+  });
+
   bindFormMasterSubmissionEvents(root);
   root.querySelectorAll('[data-history-request]').forEach(function(button) {
     button.addEventListener('click', function() { showStudentChangeHistory(button.getAttribute('data-history-request')); });
@@ -4597,23 +4833,16 @@ function renderArms() {
   });
   var html = '<div class="card"><h2 style="margin-bottom:8px;">Manage Class Arms</h2><p style="color:#666;margin-bottom:16px">Select a class arm to assign its Form Master or edit the student register.</p><div class="student-class-picker-group basic">';
   function renderArmAssignmentPanel(selectedArm) {
-    var assignedMaster = formMasters.find(function(master) { return master.name === selectedArm.formMaster; }) || {};
-    var assignedGender = assignedMaster.gender || selectedArm.formMasterGender || formMasterGenderByName[String(selectedArm.formMaster || '').trim().toLowerCase()] || '';
-    var assignedDetails = selectedArm.formMaster
-      ? '<div class="alert alert-success" style="margin:12px 0"><strong>✓ Assigned Form Master</strong><br><strong>Name:</strong> ' + escapeManagementText(selectedArm.formMaster) + '<br><strong>Gender:</strong> ' + escapeManagementText(assignedGender || 'Not recorded') + '<br><strong>Email:</strong> ' + escapeManagementText(assignedMaster.email || selectedArm.formMasterEmail || 'Not recorded') + '</div>'
-      : '<div class="alert alert-info" style="margin:12px 0">○ No Form Master is assigned to this class arm.</div>';
     var controls = '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><h3 style="margin:0">' + escapeManagementText(selectedArm.name) + ' Assignment</h3><div><button type="button" class="btn btn-primary arm-assignment-minimize">' + (armAssignmentMinimized ? 'Expand' : 'Minimize') + '</button> <button type="button" class="btn btn-danger arm-assignment-close">Close</button></div></div>';
     if (armAssignmentMinimized) return '<div class="card" style="grid-column:1/-1;margin:14px 0 0;border:1px solid #e1e6f2">' + controls + '</div>';
-    return '<div class="card" style="grid-column:1/-1;margin:14px 0 0;border:1px solid #e1e6f2">' + controls + assignedDetails + '<div style="margin-top:14px"><div class="input-group"><label for="arm-select-' + selectedArm.id + '">Assign Form Master</label><select id="arm-select-' + selectedArm.id + '" style="max-width:420px"><option value="">Select Form Master</option>' + formMasters.map(function(fm) { return '<option value="' + escapeManagementText(fm.name) + '"' + (selectedArm.formMaster === fm.name ? ' selected' : '') + '>' + escapeManagementText(fm.name) + '</option>'; }).join('') + '</select></div><button class="btn btn-primary edit-names-btn" data-arm-id="' + selectedArm.id + '">Edit Student Names</button></div></div>';
+    return '<div class="card" style="grid-column:1/-1;margin:14px 0 0;border:1px solid #e1e6f2">' + controls + '<div style="margin-top:14px"><div class="input-group"><label for="arm-select-' + selectedArm.id + '">Assign Form Master</label><select id="arm-select-' + selectedArm.id + '" style="max-width:420px"><option value="">Select Form Master</option>' + formMasters.map(function(fm) { return '<option value="' + escapeManagementText(fm.name) + '"' + (selectedArm.formMaster === fm.name ? ' selected' : '') + '>' + escapeManagementText(fm.name) + '</option>'; }).join('') + '</select></div>' + (selectedArm.formMaster ? '<p style="font-size:13px;color:#23753b;margin:4px 0 12px">✓ ' + escapeManagementText(selectedArm.formMaster) + '</p>' : '') + '<button class="btn btn-primary edit-names-btn" data-arm-id="' + selectedArm.id + '">Edit Student Names</button></div></div>';
   }
   function renderLevel(level, senior) {
     var arms = (grouped[level.key] || []).slice().sort(function(a, b) { return String(a.name).localeCompare(String(b.name), undefined, { numeric: true }); });
     var levelHtml = '<section class="student-class-level" aria-label="' + level.label + ' classes"><div class="student-class-level-banner">' + level.label + '</div><div class="student-class-arms">' + (arms.length ? arms.map(function(arm) {
       var label = String(arm.name).toUpperCase().replace(/\\s+/g, '').slice(level.key.length) || arm.name;
       var selected = String(activeArmAssignment) === String(arm.name);
-      var hasMaster = !!String(arm.formMaster || '').trim();
-      var assignmentMark = hasMaster ? '✓ Assigned · ' : '○ Unassigned · ';
-      return '<button type="button" class="student-class-arm ' + (hasMaster ? 'assigned' : 'unassigned') + (selected ? ' selected' : '') + '" data-arm-assignment="' + escapeManagementText(arm.name) + '" aria-pressed="' + selected + '" aria-label="' + assignmentMark + escapeManagementText(arm.name) + '"><span>' + (hasMaster ? '✓ ' : '○ ') + escapeManagementText(label) + '</span><small style="display:block;font-size:10px;margin-top:3px">' + (hasMaster ? 'Assigned' : 'Unassigned') + '</small></button>';
+      return '<button type="button" class="student-class-arm' + (selected ? ' selected' : '') + '" data-arm-assignment="' + escapeManagementText(arm.name) + '" aria-pressed="' + selected + '" aria-label="Select ' + escapeManagementText(arm.name) + '">' + escapeManagementText(label) + '</button>';
     }).join('') : '<span style="color:#8a93a8;font-size:12px;padding:10px">No arms available</span>') + '</div></section>';
     var selectedArm = classArms.find(function(arm) { return String(arm.name) === String(activeArmAssignment); });
     if (selectedArm && String(selectedArm.name).indexOf(level.key) === 0) {
@@ -4628,9 +4857,7 @@ function renderArms() {
   if (otherArms.length) {
     html += '<section class="student-class-level student-class-other"><div class="student-class-level-banner">Other Classes</div><div class="student-class-arms">' + otherArms.map(function(arm) {
       var selected = String(activeArmAssignment) === String(arm.name);
-      var hasMaster = !!String(arm.formMaster || '').trim();
-      var assignmentMark = hasMaster ? '✓ Assigned · ' : '○ Unassigned · ';
-      return '<button type="button" class="student-class-arm ' + (hasMaster ? 'assigned' : 'unassigned') + (selected ? ' selected' : '') + '" data-arm-assignment="' + escapeManagementText(arm.name) + '" aria-pressed="' + selected + '" aria-label="' + assignmentMark + escapeManagementText(arm.name) + '"><span>' + (hasMaster ? '✓ ' : '○ ') + escapeManagementText(arm.name) + '</span><small style="display:block;font-size:10px;margin-top:3px">' + (hasMaster ? 'Assigned' : 'Unassigned') + '</small></button>';
+      return '<button type="button" class="student-class-arm' + (selected ? ' selected' : '') + '" data-arm-assignment="' + escapeManagementText(arm.name) + '" aria-pressed="' + selected + '">' + escapeManagementText(arm.name) + '</button>';
     }).join('') + '</div></section>';
   }
   html += '</div>';
@@ -4747,49 +4974,12 @@ async function renderFormMasterManagement(panel) {
         id: item.teacher_id,
         full_name: item.full_name,
         email: item.email,
-        gender: item.gender || '',
         role: item.role,
         is_active: item.is_active
       };
-      if (item.full_name && item.gender) formMasterGenderByName[String(item.full_name).trim().toLowerCase()] = item.gender;
     });
-    var assignedTeacherIds = assignments.map(function(item) { return item.teacher_id; }).filter(function(id, index, list) { return id && list.indexOf(id) === index; });
-    if (assignedTeacherIds.length) {
-      try {
-        var genderResult = await supabaseClient.from('profiles').select('id,gender')
-          .eq('school_id', schoolId).in('id', assignedTeacherIds);
-        if (!genderResult.error) (genderResult.data || []).forEach(function(profile) {
-          var target = profilesById[String(profile.id)];
-          if (target && profile.gender) {
-            target.gender = profile.gender;
-            if (target.full_name) formMasterGenderByName[String(target.full_name).trim().toLowerCase()] = profile.gender;
-          }
-        });
-      } catch (genderLookupError) {
-        console.warn('Could not load Form Master gender details:', genderLookupError);
-      }
-    }
     var classesById = {};
     classes.forEach(function(item) { classesById[String(item.id)] = item; });
-    classArms.forEach(function(arm) {
-      var dbClass = classes.find(function(item) { return String(item.class_name) === String(arm.name); });
-      if (!dbClass) return;
-      var assignment = assignments.find(function(item) { return String(item.class_id) === String(dbClass.id); });
-      var profile = assignment && profilesById[String(assignment.teacher_id)];
-      arm.formMaster = profile ? (profile.full_name || profile.username || '') : '';
-      arm.formMasterEmail = profile ? (profile.email || '') : '';
-      arm.formMasterGender = profile ? (profile.gender || '') : '';
-      if (profile && profile.full_name) {
-        var existingMaster = formMasters.find(function(master) { return String(master.email || '').toLowerCase() === String(profile.email || '').toLowerCase(); });
-        if (existingMaster) {
-          existingMaster.name = profile.full_name;
-          existingMaster.email = profile.email || '';
-          existingMaster.gender = profile.gender || '';
-        } else {
-          formMasters.push({ id: profile.id, name: profile.full_name, email: profile.email || '', gender: profile.gender || '' });
-        }
-      }
-    });
     var armsWithAssignments = {};
     assignments.forEach(function(item) { armsWithAssignments[String(item.class_id)] = true; });
     var classOptions = classes.map(function(item) {
@@ -4802,7 +4992,6 @@ async function renderFormMasterManagement(panel) {
       return '<tr data-fm-assignment-id="' + escapeManagementText(item.id) + '">' +
         '<td>' + escapeManagementText(arm.class_name || 'Class unavailable') + '</td>' +
         '<td>' + escapeManagementText(profile.full_name || profile.username || 'Profile unavailable') + '</td>' +
-        '<td>' + escapeManagementText(profile.gender || '—') + '</td>' +
         '<td>' + escapeManagementText(profile.email || '—') + '</td>' +
         '<td>' + (isActive ? '<span style="color:#23753b;font-weight:600">Active</span>' : '<span style="color:#856404">Inactive / unavailable</span>') + '</td>' +
         '<td style="white-space:nowrap"><button type="button" class="btn btn-primary fm-edit" data-assignment-id="' + escapeManagementText(item.id) + '">Edit</button> ' +
@@ -4813,11 +5002,10 @@ async function renderFormMasterManagement(panel) {
       '<p style="color:#666;font-size:12px;margin-bottom:12px">A temporary password must be generated by the server and the teacher must change it at first login. Do not enter or store passwords here.</p>' +
       '<div class="grid grid-3"><div class="input-group"><label for="newFmArm">Class Arm *</label><select id="newFmArm"><option value="">Select class arm</option>' + classOptions + '</select></div>' +
       '<div class="input-group"><label for="newFmName">Teacher Name *</label><input type="text" id="newFmName" autocomplete="name"></div>' +
-      '<div class="input-group"><label for="newFmEmail">Teacher Email *</label><input type="email" id="newFmEmail" autocomplete="email"></div>' +
-      '<div class="input-group"><label for="newFmGender">Gender *</label><select id="newFmGender" required><option value="">Select gender</option><option value="Male">Male</option><option value="Female">Female</option></select></div></div>' +
+      '<div class="input-group"><label for="newFmEmail">Teacher Email *</label><input type="email" id="newFmEmail" autocomplete="email"></div></div>' +
       '<div id="fmManagementStatus" role="status" aria-live="polite"></div><button type="button" class="btn btn-success" id="addFmBtn">Add &amp; Assign Form Master</button> <button type="button" class="btn" id="cancelFmEditBtn" style="background:#eee;display:none">Cancel Edit</button></div>' +
-      '<div class="card"><h3>Form Master Assignments — ' + escapeManagementText(activeAcademicSession.name) + '</h3><div style="overflow-x:auto"><table><thead><tr><th>Class Arm</th><th>Teacher Name</th><th>Gender</th><th>Email</th><th>Status</th><th>Actions</th></tr></thead><tbody>' +
-      (rows || '<tr><td colspan="6" style="color:#777">No Form Master assignments exist for this session.</td></tr>') + '</tbody></table></div></div>';
+      '<div class="card"><h3>Form Master Assignments — ' + escapeManagementText(activeAcademicSession.name) + '</h3><div style="overflow-x:auto"><table><thead><tr><th>Class Arm</th><th>Teacher Name</th><th>Email</th><th>Status</th><th>Actions</th></tr></thead><tbody>' +
+      (rows || '<tr><td colspan="5" style="color:#777">No Form Master assignments exist for this session.</td></tr>') + '</tbody></table></div></div>';
 
     var editingAssignment = null;
     var status = panel.querySelector('#fmManagementStatus');
@@ -4832,7 +5020,6 @@ async function renderFormMasterManagement(panel) {
       classSelect.value = '';
       panel.querySelector('#newFmName').value = '';
       panel.querySelector('#newFmEmail').value = '';
-      panel.querySelector('#newFmGender').value = '';
       panel.querySelector('#fmFormHeading').textContent = 'Add & Assign Form Master';
       saveButton.textContent = 'Add & Assign Form Master';
       panel.querySelector('#cancelFmEditBtn').style.display = 'none';
@@ -4843,8 +5030,7 @@ async function renderFormMasterManagement(panel) {
       var classId = classSelect.value;
       var fullName = panel.querySelector('#newFmName').value.trim();
       var email = panel.querySelector('#newFmEmail').value.trim();
-      var gender = panel.querySelector('#newFmGender').value;
-      if (!classId || !fullName || !email || !gender) { showFormStatus('Select a class, enter the teacher name and email, and choose Male or Female.', 'error'); return; }
+      if (!classId || !fullName || !email) { showFormStatus('Select a class and enter the teacher name and email.', 'error'); return; }
       if (email.indexOf('@') < 1 || email.lastIndexOf('.') < email.indexOf('@') + 2) { showFormStatus('Enter a valid email address.', 'error'); return; }
       var conflict = assignments.find(function(item) { return String(item.class_id) === String(classId) && (!editingAssignment || String(item.id) !== String(editingAssignment.id)); });
       if (conflict) { showFormStatus('That class already has an assignment. Edit the existing assignment or remove it before reassigning the class.', 'error'); return; }
@@ -4853,7 +5039,7 @@ async function renderFormMasterManagement(panel) {
         try {
           var update = await supabaseClient.functions.invoke('manage-form-master', { body: {
             action: 'update_assignment', assignment_id: String(editingAssignment.id), teacher_id: String(editingAssignment.teacher_id),
-            school_id: String(schoolId), academic_session_id: String(activeAcademicSession.id), class_id: String(classId), full_name: fullName, email: email, gender: gender
+            school_id: String(schoolId), academic_session_id: String(activeAcademicSession.id), class_id: String(classId), full_name: fullName, email: email
           } });
           if (update.error || !update.data || update.data.success !== true) throw new Error(update.data && (update.data.error || update.data.message) || update.error && update.error.message || 'The server did not confirm the assignment update.');
           showFormStatus('Assignment updated.', 'success');
@@ -4871,7 +5057,7 @@ async function renderFormMasterManagement(panel) {
       saveButton.textContent = 'Creating account…';
       try {
         var created = await supabaseClient.functions.invoke('create-form-master', { body: {
-          school_id: String(schoolId), full_name: fullName, username: email, email: email, phone: '', gender: gender,
+          school_id: String(schoolId), full_name: fullName, username: email, email: email, phone: '',
           class_id: String(classId), academic_session_id: String(activeAcademicSession.id)
         } });
         if (created.error || !created.data || created.data.error || created.data.success === false) throw new Error(created.data && (created.data.error || created.data.message) || created.error && created.error.message || 'The server did not confirm Form Master creation.');
@@ -4896,7 +5082,6 @@ async function renderFormMasterManagement(panel) {
         classSelect.value = String(assignment.class_id);
         panel.querySelector('#newFmName').value = profile.full_name || '';
         panel.querySelector('#newFmEmail').value = profile.email || '';
-        panel.querySelector('#newFmGender').value = profile.gender || '';
         panel.querySelector('#fmFormHeading').textContent = 'Edit / Reassign Form Master';
         saveButton.textContent = 'Save Changes';
         panel.querySelector('#cancelFmEditBtn').style.display = 'inline-block';
@@ -5925,10 +6110,7 @@ async function saveStudent() {
     var selectedClass = currentUser.type === 'subadmin' ? window.__subAdminInputArm : currentUser.arm;
     var arm = classArms.find(function(a) { return a.name === selectedClass; });
     var currentSession = schoolInfo.session || currentSchool.session || '';
-    var assignedMasterName = arm ? arm.formMaster : currentUser.name;
-    var assignedMasterRecord = formMasters.find(function(master) { return master.name === assignedMasterName; }) || {};
-    var masterGender = currentUser.type === 'formmaster' ? (currentUser.profile && currentUser.profile.gender || '') : (assignedMasterRecord.gender || formMasterGenderByName[String(assignedMasterName || '').trim().toLowerCase()] || (arm && arm.formMasterGender) || '');
-    var newStudent = { id: Date.now(), studentName: studentName, admNo: admNo, dob: dob, age: age, sex: sex, term: term, session: currentSession, className: selectedClass, subjects: subjects, averageScore: avgScore, totalObtained: totalScore, totalObtainable: totalObtainable, position: null, positionOf: null, passport: passportData || null, formMaster: assignedMasterName, formMasterGender: masterGender, formMasterComment: formMasterComment, formMasterSignature: formMasterSigData, attendanceDays: attendanceDays, schoolDays: schoolDays, nextTermFees: nextTermFees, affective: JSON.parse(JSON.stringify(affectiveRatings)), psychomotor: JSON.parse(JSON.stringify(psychomotorRatings)) };
+    var newStudent = { id: Date.now(), studentName: studentName, admNo: admNo, dob: dob, age: age, sex: sex, term: term, session: currentSession, className: selectedClass, subjects: subjects, averageScore: avgScore, totalObtained: totalScore, totalObtainable: totalObtainable, position: null, positionOf: null, passport: passportData || null, formMaster: arm ? arm.formMaster : currentUser.name, formMasterComment: formMasterComment, formMasterSignature: formMasterSigData, attendanceDays: attendanceDays, schoolDays: schoolDays, nextTermFees: nextTermFees, affective: JSON.parse(JSON.stringify(affectiveRatings)), psychomotor: JSON.parse(JSON.stringify(psychomotorRatings)) };
     var canUpdateExisting = currentUser.type !== 'subadmin' || hasSubAdminPermission('editResults');
     var existingStudent = canUpdateExisting ? students.find(function(s) { return s.admNo === admNo && s.className === selectedClass && String(s.term) === String(term) && String(s.session || currentSession) === String(currentSession); }) : null;
     if (existingStudent) {
@@ -6728,8 +6910,6 @@ function buildStudentSheetHTML(student) {
   var config = assessmentConfig[student.className] || { ca1: 10, ca2: 10, ca3: 10, exam: 70 };
   var assignedArm = classArms.find(function(arm) { return arm.name === student.className; });
   var formMasterName = student.formMaster || (assignedArm && assignedArm.formMaster) || 'Not assigned';
-  var formMasterGender = student.formMasterGender || formMasterGenderByName[String(formMasterName).trim().toLowerCase()] || (assignedArm && assignedArm.formMasterGender) || '';
-  var formMasterTitle = /^female$/i.test(String(formMasterGender).trim()) || /^f$/i.test(String(formMasterGender).trim()) ? 'Form Mistress' : (/^male$/i.test(String(formMasterGender).trim()) || /^m$/i.test(String(formMasterGender).trim()) ? 'Form Master' : 'Form Master / Mistress');
 
   var rows = student.subjects.map(function(sub) {
     var stats = getSubjectPerformanceStats(student, sub.name);
@@ -6761,7 +6941,7 @@ function buildStudentSheetHTML(student) {
     '<table><thead><tr><th>Subject</th><th>CA1(' + config.ca1 + ')</th><th>CA2(' + config.ca2 + ')</th><th>CA3(' + config.ca3 + ')</th><th>Exam(' + config.exam + ')</th><th>Total</th><th>Class Average</th><th>Position in Class</th><th>Highest in Class</th><th>Lowest in Class</th><th>Grade</th><th>Remark</th><th>Sign</th></tr></thead><tbody>' + rows + '</tbody></table>' +
     '<div class="summary"><div><div>Total Obtained</div><strong>' + student.totalObtained + '</strong></div><div><div>Total Obtainable</div><strong>' + student.totalObtainable + '</strong></div><div><div>Average</div><strong>' + student.averageScore.toFixed(1) + '%</strong></div><div><div>Position</div><strong>' + getOrdinalPosition(student.position) + ' out of ' + (student.positionOf || '-') + ' Candidates' + '</strong></div></div>' +
     '<div class="domains"><div class="domain-box"><strong>AFFECTIVE DOMAIN</strong><table>' + affectiveRows + '</table></div><div class="domain-box"><strong>PSYCHOMOTOR DOMAIN</strong><table>' + psychomotorRows + '</table></div></div>' +
-    '<div style="margin-top:10px;"><strong>' + formMasterTitle + ':</strong> ' + escapeManagementText(formMasterName) + '<br><strong>Form Master Comment:</strong> ' + (student.formMasterComment || 'No comment') + '</div>' +
+    '<div style="margin-top:10px;"><strong>Form Master / Mistress:</strong> ' + formMasterName + '<br><strong>Form Master Comment:</strong> ' + (student.formMasterComment || 'No comment') + '</div>' +
     '<div style="margin-top:6px; padding-top:6px; border-top:1px dashed #999;"><strong>Principal\'s Comment:</strong> ' + generatePrincipalComment(student) + '<div style="display:flex; flex-direction:column; align-items:flex-start; gap:0; margin-top:3px; line-height:1;">' + (schoolInfo.principalSignature ? '<img src="' + schoolInfo.principalSignature + '" alt="Principal signature" style="max-width:80px; max-height:34px; object-fit:contain;">' : '') + '<strong style="font-size:10px; color:#111;">' + (schoolInfo.principalName || 'Principal') + '</strong></div></div>' +
     '<div class="result-footer"><div class="result-document-date">Document Date: ' + resultDateText + '</div><div class="result-approval-assets">' + stampHtml + qrHtml + '</div></div>' +
     '<div style="margin-top:5px; text-align:center; font-size:8px; color:#666;">Grading: A(80-100) B(70-79) C(60-69) D(50-59) F(0-49)</div>' +
