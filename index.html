@@ -101,8 +101,6 @@ th { background: #f5f5f5; font-weight: 600; }
 .student-class-arm.selected { border-color: #4c62ca; background: #e9edff; color: #293eaa; box-shadow: 0 0 0 2px rgba(76, 98, 202, .18), 0 4px 10px rgba(34, 51, 94, .12); }
 .student-class-arm:focus-visible { outline: 3px solid #f0b429; outline-offset: 2px; }
 .fm-class-level.selected { grid-column: 1 / -1; }
-.fm-class-arms { justify-content: flex-start; flex-wrap: nowrap; overflow-x: auto; padding: 14px 4px 8px; }
-.fm-class-arms .student-class-arm { flex: 0 0 42px; min-width: 42px; padding: 7px 5px; }
 .student-class-native-select { position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important; overflow: hidden !important; clip: rect(0, 0, 0, 0) !important; white-space: nowrap !important; border: 0 !important; }
  .student-class-other { margin-top: 12px; }
 .student-class-other .student-class-arms { justify-content: flex-start; }
@@ -440,6 +438,8 @@ var currentUser = null;
 var currentSchool = null;
 var classArms = [];
 var activeFormMasterArmId = '';
+var formMasterDetailsMinimized = false;
+var formMasterDetailsClosed = false;
 var formMasters = [];
 var subjectAssignments = [];
 var students = [];
@@ -950,7 +950,7 @@ async function handleSupabaseLogin(userType, errorDiv) {
     var authResult = await supabaseClient.auth.signInWithPassword({ email: email, password: password });
     if (authResult.error || !authResult.data || !authResult.data.user) throw authResult.error || new Error('Sign-in failed.');
     var profileResult = await supabaseClient.from('profiles')
-      .select('id,school_id,full_name,username,email,role,is_active,must_change_password')
+      .select('id,school_id,full_name,username,email,gender,role,is_active,must_change_password')
       .eq('id', authResult.data.user.id).maybeSingle();
     if (profileResult.error) throw profileResult.error;
     var profile = profileResult.data;
@@ -4738,6 +4738,7 @@ async function renderFormMasterManagement(panel) {
         id: item.teacher_id,
         full_name: item.full_name,
         email: item.email,
+        gender: item.gender || '',
         role: item.role,
         is_active: item.is_active
       };
@@ -4798,11 +4799,8 @@ async function renderFormMasterManagement(panel) {
       return '<button type="button" class="student-class-arm' +
         (selected ? ' selected' : '') +
         '" data-fm-arm-id="' + escapeManagementText(item.id) +
-        '" aria-pressed="' + selected + '"' +
-        ' style="border-color:' + (assigned ? '#86c99b' : '#d1d5db') +
-        ';background:' + (assigned ? '#e8f7ed' : '#f3f4f6') +
-        ';color:' + (assigned ? '#166534' : '#6b7280') + '">' +
-        '<span aria-hidden="true" style="font-weight:800;margin-right:5px">' +
+        '" aria-pressed="' + selected + '">' +
+        '<span aria-hidden="true" style="font-weight:800;margin-right:5px;color:' + (assigned ? '#15803d' : '#6b7280') + '">' +
         (assigned ? '✓' : '○') + '</span>' +
         escapeManagementText(label || item.class_name) +
         '</button>';
@@ -4813,11 +4811,12 @@ async function renderFormMasterManagement(panel) {
         return String(item.class_id) === String(classItem.id);
       });
       var teacher = assignment ? profilesById[String(assignment.teacher_id)] : null;
-      var details = '<div class="fm-teacher-details" style="margin-top:14px;padding:14px;border:1px solid #d9e1f2;border-radius:10px;background:#fff">';
+      var details = '<div class="fm-teacher-details" style="margin-top:14px;padding:14px;border:1px solid #d9e1f2;border-radius:10px;background:#fff">' +
+        '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><h3>' + escapeManagementText(classItem.class_name) + (assignment ? ' — Assigned Teacher' : ' — Form Master / Form Mistress') + '</h3>' +
+        '<div><button type="button" class="btn btn-primary fm-details-minimize">' + (formMasterDetailsMinimized ? 'Expand' : 'Minimize') + '</button> <button type="button" class="btn btn-danger fm-details-close">Close</button></div></div>';
 
-      if (assignment) {
-        details += '<h3>' + escapeManagementText(classItem.class_name) + ' — Assigned Teacher</h3>' +
-          '<p><strong>Status:</strong> <span style="color:#15803d">✓ Assigned</span></p>' +
+      if (!formMasterDetailsMinimized && assignment) {
+        details += '<p><strong>Status:</strong> <span style="color:#15803d">✓ Assigned</span></p>' +
           '<p><strong>Name:</strong> ' + escapeManagementText(teacher && teacher.full_name || 'Name unavailable') + '</p>' +
           '<p><strong>Email:</strong> ' + escapeManagementText(teacher && teacher.email || '—') + '</p>' +
           '<p><strong>Account:</strong> ' + (teacher && teacher.is_active === true ? 'Active' : 'Inactive / unavailable') + '</p>' +
@@ -4825,9 +4824,8 @@ async function renderFormMasterManagement(panel) {
           '<button type="button" class="btn btn-primary fm-edit" data-assignment-id="' + escapeManagementText(assignment.id) + '">Edit</button>' +
           '<button type="button" class="btn btn-primary fm-reset" data-teacher-id="' + escapeManagementText(assignment.teacher_id) + '"' + (!teacher || teacher.is_active !== true ? ' disabled' : '') + '>Reset Password</button>' +
           '<button type="button" class="btn btn-danger fm-remove" data-assignment-id="' + escapeManagementText(assignment.id) + '">Remove Assignment</button></div>';
-      } else {
-        details += '<h3>' + escapeManagementText(classItem.class_name) + ' — Form Master / Form Mistress</h3>' +
-          '<p style="color:#6b7280">○ Unassigned</p>' +
+      } else if (!formMasterDetailsMinimized) {
+        details += '<p style="color:#6b7280">○ Unassigned</p>' +
           '<p>No teacher is currently assigned to this class arm.</p>';
       }
 
@@ -4846,11 +4844,11 @@ async function renderFormMasterManagement(panel) {
 
       return '<section class="student-class-level fm-class-level' + (selectedInLevel ? ' selected' : '') + '">' +
         '<div class="student-class-level-banner">' +
-        level.label + '</div><div class="student-class-arms fm-class-arms">' +
+        level.label + '</div><div class="student-class-arms">' +
         (arms.length
           ? arms.map(renderFmArmTile).join('')
           : '<span style="padding:10px;color:#888">No arms available</span>') +
-        '</div>' + (selectedInLevel ? renderFmTeacherDetails(fmSelectedClass) : '') + '</section>';
+        '</div>' + (selectedInLevel && !formMasterDetailsClosed ? renderFmTeacherDetails(fmSelectedClass) : '') + '</section>';
     }
 
     var fmBasicHtml = fmLevels.slice(0, 3)
@@ -4865,9 +4863,9 @@ async function renderFormMasterManagement(panel) {
     var fmOtherHtml = fmOtherClasses.length
       ? '<section class="student-class-level student-class-other fm-class-level' + (fmOtherSelectedClass ? ' selected' : '') + '">' +
         '<div class="student-class-level-banner">Other Classes</div>' +
-        '<div class="student-class-arms fm-class-arms">' +
+        '<div class="student-class-arms">' +
         fmOtherClasses.map(renderFmArmTile).join('') +
-        '</div>' + (fmOtherSelectedClass ? renderFmTeacherDetails(fmOtherSelectedClass) : '') + '</section>'
+        '</div>' + (fmOtherSelectedClass && !formMasterDetailsClosed ? renderFmTeacherDetails(fmOtherSelectedClass) : '') + '</section>'
       : '';
 
     var fmArmWorkspace =
@@ -4889,15 +4887,29 @@ async function renderFormMasterManagement(panel) {
       '<p style="color:#666;font-size:12px;margin-bottom:12px">A temporary password must be generated by the server and the teacher must change it at first login. Do not enter or store passwords here.</p>' +
       '<div class="grid grid-3"><div class="input-group"><label for="newFmArm">Class Arm *</label><select id="newFmArm"><option value="">Select class arm</option>' + classOptions + '</select></div>' +
       '<div class="input-group"><label for="newFmName">Teacher Name *</label><input type="text" id="newFmName" autocomplete="name"></div>' +
-      '<div class="input-group"><label for="newFmEmail">Teacher Email *</label><input type="email" id="newFmEmail" autocomplete="email"></div></div>' +
+      '<div class="input-group"><label for="newFmEmail">Teacher Email *</label><input type="email" id="newFmEmail" autocomplete="email"></div>' +
+      '<div class="input-group"><label for="newFmGender">Gender *</label><select id="newFmGender" required><option value="">Select gender</option><option value="Male">Male</option><option value="Female">Female</option></select></div></div>' +
       '<div id="fmManagementStatus" role="status" aria-live="polite"></div><button type="button" class="btn btn-success" id="addFmBtn">Add &amp; Assign Form Master</button> <button type="button" class="btn" id="cancelFmEditBtn" style="background:#eee;display:none">Cancel Edit</button></div>' +
       fmArmWorkspace;
 
     panel.querySelectorAll('[data-fm-arm-id]').forEach(function(button) {
       button.addEventListener('click', function() {
-        activeFormMasterArmId =
-          String(button.getAttribute('data-fm-arm-id') || '');
-
+        activeFormMasterArmId = String(button.getAttribute('data-fm-arm-id') || '');
+        formMasterDetailsClosed = false;
+        formMasterDetailsMinimized = false;
+        renderFormMasterManagement(panel);
+      });
+    });
+    panel.querySelectorAll('.fm-details-minimize').forEach(function(button) {
+      button.addEventListener('click', function() {
+        formMasterDetailsMinimized = !formMasterDetailsMinimized;
+        renderFormMasterManagement(panel);
+      });
+    });
+    panel.querySelectorAll('.fm-details-close').forEach(function(button) {
+      button.addEventListener('click', function() {
+        formMasterDetailsClosed = true;
+        formMasterDetailsMinimized = false;
         renderFormMasterManagement(panel);
       });
     });
@@ -4915,6 +4927,7 @@ async function renderFormMasterManagement(panel) {
       classSelect.value = '';
       panel.querySelector('#newFmName').value = '';
       panel.querySelector('#newFmEmail').value = '';
+      panel.querySelector('#newFmGender').value = '';
       panel.querySelector('#fmFormHeading').textContent = 'Add & Assign Form Master';
       saveButton.textContent = 'Add & Assign Form Master';
       panel.querySelector('#cancelFmEditBtn').style.display = 'none';
@@ -4925,7 +4938,8 @@ async function renderFormMasterManagement(panel) {
       var classId = classSelect.value;
       var fullName = panel.querySelector('#newFmName').value.trim();
       var email = panel.querySelector('#newFmEmail').value.trim();
-      if (!classId || !fullName || !email) { showFormStatus('Select a class and enter the teacher name and email.', 'error'); return; }
+      var gender = panel.querySelector('#newFmGender').value;
+      if (!classId || !fullName || !email || !['Male', 'Female'].includes(gender)) { showFormStatus('Select a class, enter the teacher name and email, and choose Male or Female.', 'error'); return; }
       if (email.indexOf('@') < 1 || email.lastIndexOf('.') < email.indexOf('@') + 2) { showFormStatus('Enter a valid email address.', 'error'); return; }
       var conflict = assignments.find(function(item) { return String(item.class_id) === String(classId) && (!editingAssignment || String(item.id) !== String(editingAssignment.id)); });
       if (conflict) { showFormStatus('That class already has an assignment. Edit the existing assignment or remove it before reassigning the class.', 'error'); return; }
@@ -4934,7 +4948,7 @@ async function renderFormMasterManagement(panel) {
         try {
           var update = await supabaseClient.functions.invoke('manage-form-master', { body: {
             action: 'update_assignment', assignment_id: String(editingAssignment.id), teacher_id: String(editingAssignment.teacher_id),
-            school_id: String(schoolId), academic_session_id: String(activeAcademicSession.id), class_id: String(classId), full_name: fullName, email: email
+            school_id: String(schoolId), academic_session_id: String(activeAcademicSession.id), class_id: String(classId), full_name: fullName, email: email, gender: gender
           } });
           if (update.error || !update.data || update.data.success !== true) throw new Error(update.data && (update.data.error || update.data.message) || update.error && update.error.message || 'The server did not confirm the assignment update.');
           showFormStatus('Assignment updated.', 'success');
@@ -4952,7 +4966,7 @@ async function renderFormMasterManagement(panel) {
       saveButton.textContent = 'Creating account…';
       try {
         var created = await supabaseClient.functions.invoke('create-form-master', { body: {
-          school_id: String(schoolId), full_name: fullName, username: email, email: email, phone: '',
+          school_id: String(schoolId), full_name: fullName, username: email, email: email, phone: '', gender: gender,
           class_id: String(classId), academic_session_id: String(activeAcademicSession.id)
         } });
         if (created.error || !created.data || created.data.error || created.data.success === false) throw new Error(created.data && (created.data.error || created.data.message) || created.error && created.error.message || 'The server did not confirm Form Master creation.');
@@ -4977,6 +4991,8 @@ async function renderFormMasterManagement(panel) {
         classSelect.value = String(assignment.class_id);
         panel.querySelector('#newFmName').value = profile.full_name || '';
         panel.querySelector('#newFmEmail').value = profile.email || '';
+        var savedGender = String(profile.gender || '').trim();
+        panel.querySelector('#newFmGender').value = /^m(ale)?$/i.test(savedGender) ? 'Male' : (/^f(emale)?$/i.test(savedGender) ? 'Female' : '');
         panel.querySelector('#fmFormHeading').textContent = 'Edit / Reassign Form Master';
         saveButton.textContent = 'Save Changes';
         panel.querySelector('#cancelFmEditBtn').style.display = 'inline-block';
@@ -6005,11 +6021,13 @@ async function saveStudent() {
     var selectedClass = currentUser.type === 'subadmin' ? window.__subAdminInputArm : currentUser.arm;
     var arm = classArms.find(function(a) { return a.name === selectedClass; });
     var currentSession = schoolInfo.session || currentSchool.session || '';
-    var newStudent = { id: Date.now(), studentName: studentName, admNo: admNo, dob: dob, age: age, sex: sex, term: term, session: currentSession, className: selectedClass, subjects: subjects, averageScore: avgScore, totalObtained: totalScore, totalObtainable: totalObtainable, position: null, positionOf: null, passport: passportData || null, formMaster: arm ? arm.formMaster : currentUser.name, formMasterComment: formMasterComment, formMasterSignature: formMasterSigData, attendanceDays: attendanceDays, schoolDays: schoolDays, nextTermFees: nextTermFees, affective: JSON.parse(JSON.stringify(affectiveRatings)), psychomotor: JSON.parse(JSON.stringify(psychomotorRatings)) };
+    var formMasterGender = currentUser.type === 'formmaster' && authenticatedProfile ? authenticatedProfile.gender || '' : (arm && arm.formMasterGender || '');
+    var newStudent = { id: Date.now(), studentName: studentName, admNo: admNo, dob: dob, age: age, sex: sex, term: term, session: currentSession, className: selectedClass, subjects: subjects, averageScore: avgScore, totalObtained: totalScore, totalObtainable: totalObtainable, position: null, positionOf: null, passport: passportData || null, formMaster: arm ? arm.formMaster : currentUser.name, formMasterGender: formMasterGender, formMasterComment: formMasterComment, formMasterSignature: formMasterSigData, attendanceDays: attendanceDays, schoolDays: schoolDays, nextTermFees: nextTermFees, affective: JSON.parse(JSON.stringify(affectiveRatings)), psychomotor: JSON.parse(JSON.stringify(psychomotorRatings)) };
     var canUpdateExisting = currentUser.type !== 'subadmin' || hasSubAdminPermission('editResults');
     var existingStudent = canUpdateExisting ? students.find(function(s) { return s.admNo === admNo && s.className === selectedClass && String(s.term) === String(term) && String(s.session || currentSession) === String(currentSession); }) : null;
     if (existingStudent) {
       newStudent.id = existingStudent.id; newStudent.studentPassword = existingStudent.studentPassword; newStudent.published = existingStudent.published; newStudent.releaseStage = existingStudent.releaseStage;
+      newStudent.formMasterGender = newStudent.formMasterGender || existingStudent.formMasterGender || '';
       if (!document.getElementById('attendanceDays').value) { newStudent.attendanceDays = existingStudent.attendanceDays || 0; newStudent.schoolDays = existingStudent.schoolDays || schoolDays; }
       if (nextTermFeesInput === '') newStudent.nextTermFees = existingStudent.nextTermFees == null ? '' : existingStudent.nextTermFees;
       newStudent.passport = passportData || existingStudent.passport;
@@ -6805,6 +6823,13 @@ function buildStudentSheetHTML(student) {
   var config = assessmentConfig[student.className] || { ca1: 10, ca2: 10, ca3: 10, exam: 70 };
   var assignedArm = classArms.find(function(arm) { return arm.name === student.className; });
   var formMasterName = student.formMaster || (assignedArm && assignedArm.formMaster) || 'Not assigned';
+  var savedGender = String(student.formMasterGender || '').trim().toLowerCase();
+  if (savedGender === 'm') savedGender = 'male';
+  if (savedGender === 'f') savedGender = 'female';
+  var formMasterTitle = savedGender === 'male' ? 'Form Master' : (savedGender === 'female' ? 'Form Mistress' : '');
+  var formMasterDisplay = formMasterTitle
+    ? '<strong>' + formMasterTitle + ':</strong> ' + escapeManagementText(formMasterName)
+    : '<strong style="color:#b00020">⚠ Gender is missing or unrecognized; Form Master/Mistress title cannot be determined.</strong><br><strong>Assigned teacher:</strong> ' + escapeManagementText(formMasterName);
 
   var rows = student.subjects.map(function(sub) {
     var stats = getSubjectPerformanceStats(student, sub.name);
@@ -6836,7 +6861,7 @@ function buildStudentSheetHTML(student) {
     '<table><thead><tr><th>Subject</th><th>CA1(' + config.ca1 + ')</th><th>CA2(' + config.ca2 + ')</th><th>CA3(' + config.ca3 + ')</th><th>Exam(' + config.exam + ')</th><th>Total</th><th>Class Average</th><th>Position in Class</th><th>Highest in Class</th><th>Lowest in Class</th><th>Grade</th><th>Remark</th><th>Sign</th></tr></thead><tbody>' + rows + '</tbody></table>' +
     '<div class="summary"><div><div>Total Obtained</div><strong>' + student.totalObtained + '</strong></div><div><div>Total Obtainable</div><strong>' + student.totalObtainable + '</strong></div><div><div>Average</div><strong>' + student.averageScore.toFixed(1) + '%</strong></div><div><div>Position</div><strong>' + getOrdinalPosition(student.position) + ' out of ' + (student.positionOf || '-') + ' Candidates' + '</strong></div></div>' +
     '<div class="domains"><div class="domain-box"><strong>AFFECTIVE DOMAIN</strong><table>' + affectiveRows + '</table></div><div class="domain-box"><strong>PSYCHOMOTOR DOMAIN</strong><table>' + psychomotorRows + '</table></div></div>' +
-    '<div style="margin-top:10px;"><strong>Form Master / Mistress:</strong> ' + formMasterName + '<br><strong>Form Master Comment:</strong> ' + (student.formMasterComment || 'No comment') + '</div>' +
+    '<div style="margin-top:10px;">' + formMasterDisplay + '<br><strong>Form Master Comment:</strong> ' + escapeManagementText(student.formMasterComment || 'No comment') + '</div>' +
     '<div style="margin-top:6px; padding-top:6px; border-top:1px dashed #999;"><strong>Principal\'s Comment:</strong> ' + generatePrincipalComment(student) + '<div style="display:flex; flex-direction:column; align-items:flex-start; gap:0; margin-top:3px; line-height:1;">' + (schoolInfo.principalSignature ? '<img src="' + schoolInfo.principalSignature + '" alt="Principal signature" style="max-width:80px; max-height:34px; object-fit:contain;">' : '') + '<strong style="font-size:10px; color:#111;">' + (schoolInfo.principalName || 'Principal') + '</strong></div></div>' +
     '<div class="result-footer"><div class="result-document-date">Document Date: ' + resultDateText + '</div><div class="result-approval-assets">' + stampHtml + qrHtml + '</div></div>' +
     '<div style="margin-top:5px; text-align:center; font-size:8px; color:#666;">Grading: A(80-100) B(70-79) C(60-69) D(50-59) F(0-49)</div>' +
