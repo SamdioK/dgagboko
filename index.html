@@ -2095,7 +2095,7 @@ function studentDbStatusBadge(status) {
 
 async function loadStudentDatabase() {
   if (!supabaseClient || !authenticatedProfile || !authenticatedProfile.school_id || !activeAcademicSession) throw new Error('An authenticated account and active academic session are required.');
-  var classesResult = await supabaseClient.from('classes').select('id,class_name').eq('school_id', authenticatedProfile.school_id).order('class_name');
+  var classesResult = await supabaseClient.from('classes').select('id,class_name,level,arm').eq('school_id', authenticatedProfile.school_id).order('class_name');
   if (classesResult.error) studentDbThrowQueryError(classesResult.error, "SELECT id,class_name FROM classes WHERE school_id = authenticatedProfile.school_id ORDER BY class_name");
   studentDbState.classes = classesResult.data || [];
   if (currentUser.type === 'formmaster') {
@@ -2185,7 +2185,6 @@ function studentDbClassOptions() {
 }
 
 async function renderStudentDatabase() {
-  await loadClassListReplacementRequests();
   var container = document.getElementById('studentDatabaseTab');
   if (!container || !currentUser || !['admin', 'formmaster'].includes(currentUser.type)) return;
   container.innerHTML = '<div class="card"><h2>Student Database</h2><p id="studentDbLoading" class="alert alert-info">Loading classes and student records…</p><div id="studentDbWorkspace"></div></div>';
@@ -2195,6 +2194,7 @@ async function renderStudentDatabase() {
     } else {
       await Promise.all([loadFormMasterSubmissions(), loadFormMasterChangeRequests()]);
     }
+    await loadClassListReplacementRequests();
     if (studentDbState.activeClassId) await loadOfficialStudents(studentDbState.activeClassId);
     renderStudentDatabaseWorkspace();
   }).catch(function(error) {
@@ -2231,6 +2231,206 @@ async function loadClassListReplacementRequests() {
   if (result.error) throw result.error;
 
   studentDbState.replacementRequests = result.data || [];
+}
+
+function getReplacementSidPrefix(classRecord) {
+  var level = String(classRecord && classRecord.level || '').toUpperCase().replace(/\s+/g, '');
+  var arm = String(classRecord && classRecord.arm || '').toUpperCase().replace(/\s+/g, '');
+  if (!level) {
+    var className = String(classRecord && classRecord.class_name || '').toUpperCase().replace(/\s+/g, '');
+    var match = className.match(/^(BASIC[7-9]|SS[1-3])([A-Z].*)$/);
+    if (match) { level = match[1]; arm = arm || match[2]; }
+    else level = className;
+  }
+  return [level, arm].filter(Boolean).join('-') || 'CLASS';
+}
+
+function renderClassListReplacementPanel() {
+  if (!currentUser || currentUser.type !== 'formmaster') return '<p class="alert alert-error">Form Master access is required.</p>';
+  var classOptions = studentDbState.assignedClasses.map(function(item) {
+    return '<option value="' + escapeManagementText(item.id) + '">' + escapeManagementText(item.class_name) + '</option>';
+  }).join('');
+  return '<section class="card"><h3>Replace Full Class List</h3>' +
+    '<p style="color:#555;margin:8px 0 14px">Upload the complete proposed class list. The current official list will remain unchanged until an Administrator reviews and approves the request.</p>' +
+    '<div class="grid grid-2"><div class="input-group"><label for="replacementClass">Assigned Class</label><select id="replacementClass"><option value="">Select class</option>' + classOptions + '</select></div>' +
+    '<div class="input-group"><label for="replacementExcelFile">Excel file (.xlsx, .xls, or .csv)</label><input id="replacementExcelFile" type="file" accept=".xlsx,.xls,.csv"></div></div>' +
+    '<p style="font-size:12px;color:#666;margin-bottom:10px">The worksheet must include a “Full Name” or “Student Name” column. SIDs shown in the preview use the selected class and row order.</p>' +
+    '<button type="button" class="btn btn-primary" id="previewClassReplacementBtn">Preview Full Class List</button> <button type="button" class="btn btn-success" id="submitClassReplacementBtn" disabled>Submit for Administrator Approval</button>' +
+    '<div id="classReplacementStatus" role="status" aria-live="polite" style="margin-top:12px"></div><div id="classReplacementPreview" style="overflow-x:auto;margin-top:12px"></div></section>';
+}
+
+function renderClassListReplacementRequests(isAdmin) {
+  var requests = studentDbState.replacementRequests || [];
+  var list = isAdmin ? requests : requests.filter(function(request) {
+    return String(request.submitted_by || '') === String(authenticatedProfile && authenticatedProfile.id || '');
+  });
+  if (!list.length) return '<section class="card"><h3>' + (isAdmin ? 'Class List Replacement Requests' : 'My Replacement Requests') + '</h3><p style="color:#777">No replacement requests found for this academic session.</p></section>';
+  return '<section class="card"><h3>' + (isAdmin ? 'Class List Replacement Requests' : 'My Replacement Requests') + '</h3><div style="overflow-x:auto"><table><thead><tr><th>Class</th><th>Submitted</th><th>Status</th><th>Students</th><th>Action</th></tr></thead><tbody>' +
+    list.map(function(request) {
+      var className = studentDbClassLabel(request.class_id);
+      var rows = Array.isArray(request.replacement_rows) ? request.replacement_rows : [];
+      var status = String(request.status || 'pending').toLowerCase();
+      var actions = '<button type="button" class="btn btn-primary replacement-request-view" data-id="' + escapeManagementText(request.id) + '">View</button>';
+      if (isAdmin && status === 'pending') actions += ' <button type="button" class="btn btn-success replacement-request-approve" data-id="' + escapeManagementText(request.id) + '">Approve</button> <button type="button" class="btn btn-danger replacement-request-reject" data-id="' + escapeManagementText(request.id) + '">Reject</button>';
+      return '<tr><td>' + escapeManagementText(className) + '</td><td>' + escapeManagementText(studentDbDate(request.created_at) || '—') + '</td><td>' + studentDbStatusBadge(status) + (request.rejection_reason ? '<br>' + escapeManagementText(request.rejection_reason) : '') + '</td><td>' + rows.length + '</td><td>' + actions + '</td></tr>';
+    }).join('') + '</tbody></table></div><div id="replacementRequestDetails"></div></section>';
+}
+
+function bindClassListReplacementEvents(root) {
+  if (!root) return;
+  var previewButton = root.querySelector('#previewClassReplacementBtn');
+  var submitButton = root.querySelector('#submitClassReplacementBtn');
+  var classSelect = root.querySelector('#replacementClass');
+  var fileInput = root.querySelector('#replacementExcelFile');
+  var status = root.querySelector('#classReplacementStatus');
+  var preview = root.querySelector('#classReplacementPreview');
+
+  if (previewButton && submitButton && classSelect && fileInput && status && preview) {
+    previewButton.addEventListener('click', async function() {
+      var classRecord = studentDbState.assignedClasses.find(function(item) { return String(item.id) === String(classSelect.value); });
+      var file = fileInput.files && fileInput.files[0];
+      status.className = '';
+      preview.innerHTML = '';
+      submitButton.disabled = true;
+      if (!classRecord || !file) {
+        status.className = 'alert alert-error';
+        status.textContent = 'Select an assigned class and choose a spreadsheet first.';
+        return;
+      }
+      previewButton.disabled = true;
+      previewButton.textContent = 'Reading…';
+      try {
+        var workbook = await readSpreadsheetWorkbook(file);
+        var sheet = workbook.Sheets[workbook.SheetNames[0]];
+        var rawRows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+        var headers = Object.keys(rawRows[0] || {});
+        var nameHeader = headers.find(function(header) {
+          return ['full name', 'student name', 'name'].indexOf(String(header).trim().toLowerCase()) !== -1;
+        });
+        if (!nameHeader) throw new Error('The spreadsheet must contain a “Full Name” or “Student Name” column.');
+        var prefix = getReplacementSidPrefix(classRecord);
+        var namesSeen = {};
+        var rows = rawRows.map(function(row) { return studentDbClean(row[nameHeader]); }).filter(function(name) {
+          var key = name.toLowerCase();
+          if (!key || namesSeen[key]) return false;
+          namesSeen[key] = true;
+          return true;
+        }).map(function(name, index) {
+          return { sid: prefix + '-' + String(index + 1).padStart(3, '0'), full_name: name };
+        });
+        if (!rows.length) throw new Error('No student names were found in the spreadsheet.');
+        studentDbState.replacementDraftRows = rows;
+        preview.innerHTML = '<table><thead><tr><th>S/N</th><th>Proposed SID</th><th>Student Name</th></tr></thead><tbody>' + rows.map(function(row, index) {
+          return '<tr><td>' + (index + 1) + '</td><td>' + escapeManagementText(row.sid) + '</td><td>' + escapeManagementText(row.full_name) + '</td></tr>';
+        }).join('') + '</tbody></table>';
+        status.className = 'alert alert-info';
+        status.textContent = rows.length + ' unique student name(s) ready for review. Proposed SIDs are previews; the database remains authoritative when approved.';
+        submitButton.disabled = false;
+      } catch (error) {
+        studentDbState.replacementDraftRows = [];
+        status.className = 'alert alert-error';
+        status.textContent = error && error.message ? error.message : 'Unable to preview this spreadsheet.';
+      } finally {
+        previewButton.disabled = false;
+        previewButton.textContent = 'Preview Full Class List';
+      }
+    });
+
+    submitButton.addEventListener('click', async function() {
+      var classRecord = studentDbState.assignedClasses.find(function(item) { return String(item.id) === String(classSelect.value); });
+      var rows = studentDbState.replacementDraftRows || [];
+      if (!classRecord || !rows.length || !authenticatedProfile || !activeAcademicSession) {
+        status.className = 'alert alert-error';
+        status.textContent = 'Preview a valid class list and confirm the active academic session before submitting.';
+        return;
+      }
+      submitButton.disabled = true;
+      submitButton.textContent = 'Submitting…';
+      try {
+        var result = await supabaseClient.from('class_list_replacement_requests').insert({
+          school_id: authenticatedProfile.school_id,
+          academic_session_id: activeAcademicSession.id,
+          class_id: classRecord.id,
+          submitted_by: authenticatedProfile.id,
+          status: 'pending',
+          replacement_rows: rows
+        }).select('*').single();
+        if (result.error) throw result.error;
+        studentDbState.replacementRequests.unshift(result.data);
+        studentDbState.replacementDraftRows = [];
+        status.className = 'alert alert-success';
+        status.textContent = 'Full class list submitted for Administrator approval. The official list has not been changed.';
+        preview.innerHTML = '';
+        fileInput.value = '';
+        showToast('Class list replacement submitted for approval.', 'success');
+        renderStudentDatabaseWorkspace();
+      } catch (error) {
+        status.className = 'alert alert-error';
+        status.textContent = 'Unable to submit the replacement request: ' + (error && error.message || 'Unknown error');
+        submitButton.disabled = false;
+      } finally {
+        if (submitButton.isConnected) submitButton.textContent = 'Submit for Administrator Approval';
+      }
+    });
+  }
+
+  root.querySelectorAll('.replacement-request-view').forEach(function(button) {
+    button.addEventListener('click', function() {
+      var request = (studentDbState.replacementRequests || []).find(function(item) { return String(item.id) === String(button.dataset.id); });
+      var details = root.querySelector('#replacementRequestDetails');
+      if (!request || !details) return;
+      var rows = Array.isArray(request.replacement_rows) ? request.replacement_rows : [];
+      details.innerHTML = '<div class="card"><h4>Proposed Class List — ' + escapeManagementText(studentDbClassLabel(request.class_id)) + '</h4><div style="overflow-x:auto"><table><thead><tr><th>SID</th><th>Student Name</th></tr></thead><tbody>' + rows.map(function(row) {
+        return '<tr><td>' + escapeManagementText(row.sid || 'Generated on approval') + '</td><td>' + escapeManagementText(row.full_name || row.name || '') + '</td></tr>';
+      }).join('') + '</tbody></table></div><button type="button" class="btn" id="closeReplacementDetails" style="background:#eee">Close</button></div>';
+      details.querySelector('#closeReplacementDetails').addEventListener('click', function() { details.innerHTML = ''; });
+    });
+  });
+
+  root.querySelectorAll('.replacement-request-approve').forEach(function(button) {
+    button.addEventListener('click', async function() {
+      if (!currentUser || currentUser.type !== 'admin') return;
+      if (!window.confirm('Approve this full class-list replacement? The database will apply the replacement for the selected session.')) return;
+      button.disabled = true;
+      try {
+        var result = await supabaseClient.rpc('approve_class_list_replacement_request', { p_request_id: button.dataset.id });
+        if (result.error) throw result.error;
+        var response = Array.isArray(result.data) ? result.data[0] : result.data;
+        if (response && (response.success === false || response.error)) throw new Error(response.error || response.message || 'Approval failed.');
+        await loadClassListReplacementRequests();
+        renderStudentDatabaseWorkspace();
+        showToast('Class list replacement approved.', 'success');
+      } catch (error) {
+        showToast('Could not approve the replacement: ' + (error && error.message || 'Unknown error'), 'error');
+        button.disabled = false;
+      }
+    });
+  });
+
+  root.querySelectorAll('.replacement-request-reject').forEach(function(button) {
+    button.addEventListener('click', async function() {
+      if (!currentUser || currentUser.type !== 'admin') return;
+      var reason = window.prompt('Enter a reason for rejecting this replacement request:');
+      if (reason === null) return;
+      if (!studentDbClean(reason)) { showToast('A rejection reason is required.', 'error'); return; }
+      button.disabled = true;
+      try {
+        var result = await supabaseClient.rpc('reject_class_list_replacement_request', {
+          p_request_id: button.dataset.id,
+          p_reason: studentDbClean(reason)
+        });
+        if (result.error) throw result.error;
+        var response = Array.isArray(result.data) ? result.data[0] : result.data;
+        if (response && (response.success === false || response.error)) throw new Error(response.error || response.message || 'Rejection failed.');
+        await loadClassListReplacementRequests();
+        renderStudentDatabaseWorkspace();
+        showToast('Class list replacement rejected.', 'info');
+      } catch (error) {
+        showToast('Could not reject the replacement: ' + (error && error.message || 'Unknown error'), 'error');
+        button.disabled = false;
+      }
+    });
+  });
 }
 
 function renderStudentDatabaseWorkspace() {
