@@ -2139,8 +2139,44 @@ async function loadPendingStudentApprovals() {
   (batches.data || []).forEach(function(batch) { batchMap[String(batch.id)] = batch; });
   var batchIds = Object.keys(batchMap);
   if (!batchIds.length) { studentDbState.pending = []; return; }
-  var result = await supabaseClient.from('student_import_rows').select('*').in('batch_id', batchIds).order('created_at', { ascending: true });
-  if (result.error) studentDbThrowQueryError(result.error, "SELECT * FROM student_import_rows WHERE batch_id IN (student_import_batches.id values) ORDER BY created_at ASC");
+  var result = await supabaseClient
+    .from('student_import_rows')
+    .select('*')
+    .in('batch_id', batchIds);
+
+  if (result.error) {
+    studentDbThrowQueryError(
+      result.error,
+      'SELECT * FROM student_import_rows WHERE batch_id IN (student_import_batches.id values)'
+    );
+  }
+
+  var batchCreatedAt = {};
+  (batches.data || []).forEach(function(batch) {
+    batchCreatedAt[String(batch.id)] = batch.created_at || '';
+  });
+
+  (result.data || []).sort(function(a, b) {
+    var dateA = batchCreatedAt[String(a.batch_id)] || '';
+    var dateB = batchCreatedAt[String(b.batch_id)] || '';
+
+    if (dateA !== dateB) {
+      return dateA.localeCompare(dateB);
+    }
+
+    var indexA = a.row_index == null ? NaN : Number(a.row_index);
+    var indexB = b.row_index == null ? NaN : Number(b.row_index);
+
+    if (Number.isFinite(indexA) && Number.isFinite(indexB)) {
+      if (indexA !== indexB) return indexA - indexB;
+    } else if (Number.isFinite(indexA) !== Number.isFinite(indexB)) {
+      return Number.isFinite(indexA) ? -1 : 1;
+    }
+
+    return String(a.created_at || '').localeCompare(
+      String(b.created_at || '')
+    ) || String(a.id || '').localeCompare(String(b.id || ''));
+  });
   var submitterIds = (batches.data || []).map(function(batch) { return batch.submitted_by; }).filter(function(id, index, list) { return id && list.indexOf(id) === index; });
   var submitterNames = {};
   if (submitterIds.length) {
@@ -2173,9 +2209,49 @@ async function loadFormMasterSubmissions() {
   (batches.data || []).forEach(function(batch) { batchMap[String(batch.id)] = batch; });
   var ids = Object.keys(batchMap);
   if (!ids.length) { studentDbState.importRows = []; return; }
-  var result = await supabaseClient.from('student_import_rows').select('*').in('batch_id', ids).order('created_at', { ascending: false });
-  if (result.error) studentDbThrowQueryError(result.error, "SELECT * FROM student_import_rows WHERE batch_id IN (submitted student_import_batches.id values) ORDER BY created_at DESC");
-  studentDbState.importRows = (result.data || []).map(function(row) { var batch = batchMap[String(row.batch_id)] || {}; return Object.assign({}, row, { class_id: row.class_id || batch.class_id, submission_type: row.submission_type || batch.submission_type }); });
+  var result = await supabaseClient
+    .from('student_import_rows')
+    .select('*')
+    .in('batch_id', ids);
+
+  if (result.error) {
+    studentDbThrowQueryError(
+      result.error,
+      'SELECT * FROM student_import_rows WHERE batch_id IN (submitted student_import_batches.id values)'
+    );
+  }
+
+  studentDbState.importRows = (result.data || []).map(function(row) {
+    var batch = batchMap[String(row.batch_id)] || {};
+
+    return Object.assign({}, row, {
+      class_id: row.class_id || batch.class_id,
+      submission_type: row.submission_type || batch.submission_type,
+      _batch_created_at: batch.created_at || ''
+    });
+  });
+
+  studentDbState.importRows.sort(function(a, b) {
+    var dateA = String(a._batch_created_at || '');
+    var dateB = String(b._batch_created_at || '');
+
+    if (dateA !== dateB) {
+      return dateB.localeCompare(dateA);
+    }
+
+    var indexA = a.row_index == null ? NaN : Number(a.row_index);
+    var indexB = b.row_index == null ? NaN : Number(b.row_index);
+
+    if (Number.isFinite(indexA) && Number.isFinite(indexB)) {
+      if (indexA !== indexB) return indexA - indexB;
+    } else if (Number.isFinite(indexA) !== Number.isFinite(indexB)) {
+      return Number.isFinite(indexA) ? -1 : 1;
+    }
+
+    return String(a.created_at || '').localeCompare(
+      String(b.created_at || '')
+    ) || String(a.id || '').localeCompare(String(b.id || ''));
+  });
 }
 
 function studentDbClassOptions() {
