@@ -1835,7 +1835,9 @@ function renderStudentResults() {
 }
 
 // ===================== SUPABASE STUDENT DATABASE =====================
-var studentDbState = { classes: [], assignedClasses: [], official: [], pending: [], requests: [], importRows: [], activeClassId: '', view: 'official', officialPanelMinimized: false, officialPanelClosed: false, draftRows: [], existingStudentSearchResults: [], selectedExistingStudentId: '', activeResubmissions: {}, activeProvisioning: {}, activePasswordResets: {}, activeChangeReviewRequestId: null, studentCorrectionRealtimeChannel: null, studentCorrectionRealtimeStarted: false, studentCorrectionRealtimeTimers: {} };
+var studentDbState = {
+  replacementRequests: [],
+  replacementDraftRows: [], classes: [], assignedClasses: [], official: [], pending: [], requests: [], importRows: [], activeClassId: '', view: 'official', officialPanelMinimized: false, officialPanelClosed: false, draftRows: [], existingStudentSearchResults: [], selectedExistingStudentId: '', activeResubmissions: {}, activeProvisioning: {}, activePasswordResets: {}, activeChangeReviewRequestId: null, studentCorrectionRealtimeChannel: null, studentCorrectionRealtimeStarted: false, studentCorrectionRealtimeTimers: {} };
 
 function stopStudentCorrectionRealtime() {
   if (studentDbState.studentCorrectionRealtimeChannel && supabaseClient) {
@@ -2182,7 +2184,8 @@ function studentDbClassOptions() {
   }).join('');
 }
 
-function renderStudentDatabase() {
+async function renderStudentDatabase() {
+  await loadClassListReplacementRequests();
   var container = document.getElementById('studentDatabaseTab');
   if (!container || !currentUser || !['admin', 'formmaster'].includes(currentUser.type)) return;
   container.innerHTML = '<div class="card"><h2>Student Database</h2><p id="studentDbLoading" class="alert alert-info">Loading classes and student records…</p><div id="studentDbWorkspace"></div></div>';
@@ -2217,12 +2220,28 @@ function renderStudentDatabase() {
   });
 }
 
+async function loadClassListReplacementRequests() {
+  var result = await supabaseClient
+    .from('class_list_replacement_requests')
+    .select('*')
+    .eq('school_id', authenticatedProfile.school_id)
+    .eq('academic_session_id', activeAcademicSession.id)
+    .order('created_at', { ascending: false });
+
+  if (result.error) throw result.error;
+
+  studentDbState.replacementRequests = result.data || [];
+}
+
 function renderStudentDatabaseWorkspace() {
   var workspace = document.getElementById('studentDbWorkspace');
   if (!workspace) return;
   var isAdmin = currentUser.type === 'admin';
-  var tabs = isAdmin ? ['official', 'pending', 'requests', 'enrolExisting'] : ['official', 'submit', 'submissions', 'corrections'];
-  var titles = { official: 'Official Students', pending: 'Pending Approvals', requests: 'Change Requests', enrolExisting: 'Enrol Existing Student', submit: 'Add / Upload Students', submissions: 'My Submissions', corrections: 'Request Correction' };
+  var tabs = isAdmin ? ['official', 'pending', 'requests', 'classListReplacements', 'enrolExisting'] : ['official', 'submit', 'submissions', 'replaceList', 'replacementSubmissions', 'corrections'];
+  var titles = { official: 'Official Students', pending: 'Pending Approvals', requests: 'Change Requests',
+  classListReplacements: 'Class List Replacements',
+  replaceList: 'Replace Full Class List',
+  replacementSubmissions: 'My Replacement Requests', enrolExisting: 'Enrol Existing Student', submit: 'Add / Upload Students', submissions: 'My Submissions', corrections: 'Request Correction' };
   if (tabs.indexOf(studentDbState.view) === -1) studentDbState.view = tabs[0];
   var html = '<p style="margin:4px 0 12px;color:#555"><strong>Academic Session:</strong> ' + escapeManagementText(activeAcademicSession.name) + '</p><div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">' + tabs.map(function(tab) {
     return '<button class="btn ' + (studentDbState.view === tab ? 'btn-primary' : '') + ' student-db-tab" data-view="' + tab + '" style="' + (studentDbState.view !== tab ? 'background:#eee' : '') + '">' + titles[tab] + '</button>';
@@ -2232,12 +2251,25 @@ function renderStudentDatabaseWorkspace() {
   if (studentDbState.view === 'submissions') html += renderFormMasterSubmissionList();
   if (studentDbState.view === 'pending') html += renderPendingApprovals();
   if (studentDbState.view === 'requests') html += renderAdminChangeRequests();
+
+if (studentDbState.view === 'classListReplacements') {
+  html += renderClassListReplacementRequests(true);
+}
+
+if (studentDbState.view === 'replaceList') {
+  html += renderClassListReplacementPanel();
+}
+
+if (studentDbState.view === 'replacementSubmissions') {
+  html += renderClassListReplacementRequests(false);
+}
   if (studentDbState.view === 'enrolExisting') html += renderExistingStudentEnrolmentPanel();
   if (studentDbState.view === 'corrections') html += renderCorrectionPanel();
   workspace.innerHTML = html;
   workspace.querySelectorAll('.student-db-tab').forEach(function(button) { button.addEventListener('click', function() { studentDbState.view = button.dataset.view; renderStudentDatabaseWorkspace(); }); });
   bindOfficialStudentLoginEvents(workspace);
   bindStudentDatabaseEvents(workspace);
+  bindClassListReplacementEvents(workspace);
   bindExistingStudentEnrolmentEvents(workspace);
 }
 
@@ -5156,7 +5188,7 @@ function renderMasters() {
     var select = document.getElementById('newStArm');
     if (!select) return;
     select.innerHTML = '<option value="">Loading classes...</option>';
-    var result = await supabaseClient.from('classes').select('id,class_name')
+    var result = await supabaseClient.from('classes').select('id,class_name,level,arm')
       .eq('school_id', authenticatedProfile.school_id).order('class_name');
     if (result.error) {
       availableSupabaseClasses = [];
