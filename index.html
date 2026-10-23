@@ -3832,30 +3832,109 @@ async function openTeacherRectificationEditor(requestId) {
 }
 
 async function submitStudentForApproval(rows, classId, submissionType) {
-  if (!classId || !studentDbState.assignedClasses.some(function(item) { return String(item.id) === String(classId); })) throw new Error('You are not assigned to the selected class.');
-  if (!activeAcademicSession || !activeAcademicSession.id) throw new Error('No active academic session is available.');
-  var batchResult = await supabaseClient.from('student_import_batches').insert({
-    school_id: authenticatedProfile.school_id, academic_session_id: activeAcademicSession.id,
-    class_id: classId, submitted_by: authenticatedProfile.id, submission_type: submissionType,
-    status: 'pending', total_rows: rows.length, approved_rows: 0, rejected_rows: 0
-  }).select('id').single();
+  if (!classId || !studentDbState.assignedClasses.some(function(item) {
+    return String(item.id) === String(classId);
+  })) {
+    throw new Error('You are not assigned to the selected class.');
+  }
+
+  if (!activeAcademicSession || !activeAcademicSession.id) {
+    throw new Error('No active academic session is available.');
+  }
+
+  if (!Array.isArray(rows) || rows.length === 0) {
+    throw new Error('There are no valid student rows to submit.');
+  }
+
+  var isExcel = String(submissionType || '').toLowerCase() === 'excel';
+  var seenPositions = new Set();
+
+  // Validate all row positions BEFORE creating a batch.
+  rows.forEach(function(row, index) {
+    if (!studentDbClean(row.full_name)) {
+      throw new Error('A student name is missing at submission row ' + (index + 1) + '.');
+    }
+
+    var position = isExcel ? Number(row._row) : index + 1;
+
+    if (!Number.isInteger(position) || position < 1) {
+      throw new Error(
+        'Invalid original Excel row position for "' +
+        studentDbClean(row.full_name) +
+        '". Please preview the Excel file again.'
+      );
+    }
+
+    if (seenPositions.has(position)) {
+      throw new Error(
+        'Duplicate Excel row position ' + position +
+        '. Please preview the Excel file again.'
+      );
+    }
+
+    seenPositions.add(position);
+  });
+
+  // Keep rows in their original spreadsheet order.
+  var preparedRows = rows.map(function(row, index) {
+    return {
+      full_name: studentDbClean(row.full_name),
+      row_index: isExcel ? Number(row._row) : index + 1
+    };
+  }).sort(function(a, b) {
+    return a.row_index - b.row_index;
+  });
+
+  var batchResult = await supabaseClient
+    .from('student_import_batches')
+    .insert({
+      school_id: authenticatedProfile.school_id,
+      academic_session_id: activeAcademicSession.id,
+      class_id: classId,
+      submitted_by: authenticatedProfile.id,
+      submission_type: submissionType,
+      status: 'pending',
+      total_rows: preparedRows.length,
+      approved_rows: 0,
+      rejected_rows: 0
+    })
+    .select('id')
+    .single();
+
   if (batchResult.error) throw batchResult.error;
+
   var batchId = batchResult.data.id;
-  var payload = rows.map(function(row, index) {
+
+  var payload = preparedRows.map(function(row) {
     return {
       batch_id: batchId,
       school_id: authenticatedProfile.school_id,
       class_id: classId,
-      full_name: studentDbClean(row.full_name),
-      row_index: index + 1,
+      full_name: row.full_name,
+      row_index: row.row_index,
       status: 'pending'
     };
   });
-  var rowResult = await supabaseClient.from('student_import_rows').insert(payload);
+
+  var rowResult = await supabaseClient
+    .from('student_import_rows')
+    .insert(payload);
+
   if (rowResult.error) {
-    await supabaseClient.from('student_import_batches').update({ status: 'rejected' }).eq('id', batchId).eq('school_id', authenticatedProfile.school_id);
+    // Mark the failed batch for investigation.
+    await supabaseClient
+      .from('student_import_batches')
+      .update({
+        status: 'rejected',
+        notes: 'Student row insertion failed: ' +
+          String(rowResult.error.message || 'Unknown database error').slice(0, 1000)
+      })
+      .eq('id', batchId)
+      .eq('school_id', authenticatedProfile.school_id);
+
     throw rowResult.error;
   }
+
   return batchId;
 }
 
@@ -4219,7 +4298,17 @@ function bindStudentDatabaseEvents(root) {
           errorCell.textContent = row._errors.join(', ') || 'Valid';
           errorCell.style.color = row._errors.length ? '#b00020' : '#176b2c';
         });
-        var valid = studentDbState.draftRows.filter(function(row) { return row._errors.length === 0; }).map(function(row) { var copy = Object.assign({}, row); delete copy._row; delete copy._errors; return copy; });
+        var valid = studentDbState.draftRows
+        .filter(function(row) {
+          return row._errors.length === 0;
+        })
+        .map(function(row) {
+          var copy = Object.assign({}, row);
+          delete copy._errors;
+
+          // Preserve _row for submitStudentForApproval().
+          return copy;
+        });
         if (!valid.length) { showToast('There are no valid rows to submit.', 'error'); return; }
         this.disabled = true; this.textContent = 'Submitting…';
         try { await submitStudentForApproval(valid, root.querySelector('#studentSubmissionClass').value, 'excel'); root.querySelector('#studentSubmitStatus').innerHTML = '<p class="alert alert-success">' + valid.length + ' student row(s) submitted and awaiting Administrator approval.</p>'; target.innerHTML = ''; }
