@@ -2139,8 +2139,44 @@ async function loadPendingStudentApprovals() {
   (batches.data || []).forEach(function(batch) { batchMap[String(batch.id)] = batch; });
   var batchIds = Object.keys(batchMap);
   if (!batchIds.length) { studentDbState.pending = []; return; }
-  var result = await supabaseClient.from('student_import_rows').select('*').in('batch_id', batchIds).order('created_at', { ascending: true });
-  if (result.error) studentDbThrowQueryError(result.error, "SELECT * FROM student_import_rows WHERE batch_id IN (student_import_batches.id values) ORDER BY created_at ASC");
+  var result = await supabaseClient
+    .from('student_import_rows')
+    .select('*')
+    .in('batch_id', batchIds);
+
+  if (result.error) {
+    studentDbThrowQueryError(
+      result.error,
+      'SELECT * FROM student_import_rows WHERE batch_id IN (student_import_batches.id values)'
+    );
+  }
+
+  var batchCreatedAt = {};
+  (batches.data || []).forEach(function(batch) {
+    batchCreatedAt[String(batch.id)] = batch.created_at || '';
+  });
+
+  (result.data || []).sort(function(a, b) {
+    var dateA = batchCreatedAt[String(a.batch_id)] || '';
+    var dateB = batchCreatedAt[String(b.batch_id)] || '';
+
+    if (dateA !== dateB) {
+      return dateA.localeCompare(dateB);
+    }
+
+    var indexA = a.row_index == null ? NaN : Number(a.row_index);
+    var indexB = b.row_index == null ? NaN : Number(b.row_index);
+
+    if (Number.isFinite(indexA) && Number.isFinite(indexB)) {
+      if (indexA !== indexB) return indexA - indexB;
+    } else if (Number.isFinite(indexA) !== Number.isFinite(indexB)) {
+      return Number.isFinite(indexA) ? -1 : 1;
+    }
+
+    return String(a.created_at || '').localeCompare(
+      String(b.created_at || '')
+    ) || String(a.id || '').localeCompare(String(b.id || ''));
+  });
   var submitterIds = (batches.data || []).map(function(batch) { return batch.submitted_by; }).filter(function(id, index, list) { return id && list.indexOf(id) === index; });
   var submitterNames = {};
   if (submitterIds.length) {
@@ -2173,9 +2209,49 @@ async function loadFormMasterSubmissions() {
   (batches.data || []).forEach(function(batch) { batchMap[String(batch.id)] = batch; });
   var ids = Object.keys(batchMap);
   if (!ids.length) { studentDbState.importRows = []; return; }
-  var result = await supabaseClient.from('student_import_rows').select('*').in('batch_id', ids).order('created_at', { ascending: false });
-  if (result.error) studentDbThrowQueryError(result.error, "SELECT * FROM student_import_rows WHERE batch_id IN (submitted student_import_batches.id values) ORDER BY created_at DESC");
-  studentDbState.importRows = (result.data || []).map(function(row) { var batch = batchMap[String(row.batch_id)] || {}; return Object.assign({}, row, { class_id: row.class_id || batch.class_id, submission_type: row.submission_type || batch.submission_type }); });
+  var result = await supabaseClient
+    .from('student_import_rows')
+    .select('*')
+    .in('batch_id', ids);
+
+  if (result.error) {
+    studentDbThrowQueryError(
+      result.error,
+      'SELECT * FROM student_import_rows WHERE batch_id IN (submitted student_import_batches.id values)'
+    );
+  }
+
+  studentDbState.importRows = (result.data || []).map(function(row) {
+    var batch = batchMap[String(row.batch_id)] || {};
+
+    return Object.assign({}, row, {
+      class_id: row.class_id || batch.class_id,
+      submission_type: row.submission_type || batch.submission_type,
+      _batch_created_at: batch.created_at || ''
+    });
+  });
+
+  studentDbState.importRows.sort(function(a, b) {
+    var dateA = String(a._batch_created_at || '');
+    var dateB = String(b._batch_created_at || '');
+
+    if (dateA !== dateB) {
+      return dateB.localeCompare(dateA);
+    }
+
+    var indexA = a.row_index == null ? NaN : Number(a.row_index);
+    var indexB = b.row_index == null ? NaN : Number(b.row_index);
+
+    if (Number.isFinite(indexA) && Number.isFinite(indexB)) {
+      if (indexA !== indexB) return indexA - indexB;
+    } else if (Number.isFinite(indexA) !== Number.isFinite(indexB)) {
+      return Number.isFinite(indexA) ? -1 : 1;
+    }
+
+    return String(a.created_at || '').localeCompare(
+      String(b.created_at || '')
+    ) || String(a.id || '').localeCompare(String(b.id || ''));
+  });
 }
 
 function studentDbClassOptions() {
@@ -3756,35 +3832,189 @@ async function openTeacherRectificationEditor(requestId) {
 }
 
 async function submitStudentForApproval(rows, classId, submissionType) {
-  if (!classId || !studentDbState.assignedClasses.some(function(item) { return String(item.id) === String(classId); })) throw new Error('You are not assigned to the selected class.');
-  if (!activeAcademicSession || !activeAcademicSession.id) throw new Error('No active academic session is available.');
-  var batchResult = await supabaseClient.from('student_import_batches').insert({
-    school_id: authenticatedProfile.school_id, academic_session_id: activeAcademicSession.id,
-    class_id: classId, submitted_by: authenticatedProfile.id, submission_type: submissionType,
-    status: 'pending', total_rows: rows.length, approved_rows: 0, rejected_rows: 0
-  }).select('id').single();
-  if (batchResult.error) throw batchResult.error;
-  var batchId = batchResult.data.id;
-  var payload = rows.map(function(row) {
-    return { batch_id: batchId, school_id: authenticatedProfile.school_id, class_id: classId,
-      full_name: studentDbClean(row.full_name), status: 'pending' };
+  if (!classId || !studentDbState.assignedClasses.some(function(item) {
+    return String(item.id) === String(classId);
+  })) {
+    throw new Error('You are not assigned to the selected class.');
+  }
+
+  if (!activeAcademicSession || !activeAcademicSession.id) {
+    throw new Error('No active academic session is available.');
+  }
+
+  if (!Array.isArray(rows) || rows.length === 0) {
+    throw new Error('There are no valid student rows to submit.');
+  }
+
+  var isExcel = String(submissionType || '').toLowerCase() === 'excel';
+  var seenPositions = new Set();
+
+  // Validate all row positions BEFORE creating a batch.
+  rows.forEach(function(row, index) {
+    if (!studentDbClean(row.full_name)) {
+      throw new Error('A student name is missing at submission row ' + (index + 1) + '.');
+    }
+
+    var position = isExcel ? Number(row._row) : index + 1;
+
+    if (!Number.isInteger(position) || position < 1) {
+      throw new Error(
+        'Invalid original Excel row position for "' +
+        studentDbClean(row.full_name) +
+        '". Please preview the Excel file again.'
+      );
+    }
+
+    if (seenPositions.has(position)) {
+      throw new Error(
+        'Duplicate Excel row position ' + position +
+        '. Please preview the Excel file again.'
+      );
+    }
+
+    seenPositions.add(position);
   });
-  var rowResult = await supabaseClient.from('student_import_rows').insert(payload);
+
+  // Keep rows in their original spreadsheet order.
+  var preparedRows = rows.map(function(row, index) {
+    return {
+      full_name: studentDbClean(row.full_name),
+      row_index: isExcel ? Number(row._row) : index + 1
+    };
+  }).sort(function(a, b) {
+    return a.row_index - b.row_index;
+  });
+
+  var batchResult = await supabaseClient
+    .from('student_import_batches')
+    .insert({
+      school_id: authenticatedProfile.school_id,
+      academic_session_id: activeAcademicSession.id,
+      class_id: classId,
+      submitted_by: authenticatedProfile.id,
+      submission_type: submissionType,
+      status: 'pending',
+      total_rows: preparedRows.length,
+      approved_rows: 0,
+      rejected_rows: 0
+    })
+    .select('id')
+    .single();
+
+  if (batchResult.error) throw batchResult.error;
+
+  var batchId = batchResult.data.id;
+
+  var payload = preparedRows.map(function(row) {
+    return {
+      batch_id: batchId,
+      school_id: authenticatedProfile.school_id,
+      class_id: classId,
+      full_name: row.full_name,
+      row_index: row.row_index,
+      status: 'pending'
+    };
+  });
+
+  var rowResult = await supabaseClient
+    .from('student_import_rows')
+    .insert(payload);
+
   if (rowResult.error) {
-    await supabaseClient.from('student_import_batches').update({ status: 'rejected' }).eq('id', batchId).eq('school_id', authenticatedProfile.school_id);
+    // Mark the failed batch for investigation.
+    await supabaseClient
+      .from('student_import_batches')
+      .update({
+        status: 'rejected',
+        notes: 'Student row insertion failed: ' +
+          String(rowResult.error.message || 'Unknown database error').slice(0, 1000)
+      })
+      .eq('id', batchId)
+      .eq('school_id', authenticatedProfile.school_id);
+
     throw rowResult.error;
   }
+
   return batchId;
 }
 
 async function approveStudentImportRow(importRowId) {
-  var result = await supabaseClient.rpc('approve_student_import_row', { p_import_row_id: importRowId });
+  var rowCheck = await supabaseClient
+    .from('student_import_rows')
+    .select('id,row_index,batch_id,status')
+    .eq('id', importRowId)
+    .maybeSingle();
+
+  if (rowCheck.error) throw rowCheck.error;
+  if (!rowCheck.data) {
+    throw new Error('Student submission was not found.');
+  }
+
+  var batchCheck = await supabaseClient
+    .from('student_import_batches')
+    .select('submission_type')
+    .eq('id', rowCheck.data.batch_id)
+    .maybeSingle();
+
+  if (batchCheck.error) throw batchCheck.error;
+
+  var isExcel = String(
+    batchCheck.data && batchCheck.data.submission_type || ''
+  ).toLowerCase() === 'excel';
+
+  var rowIndex = Number(rowCheck.data.row_index);
+
+  if (isExcel && (
+    !Number.isInteger(rowIndex) || rowIndex < 1
+  )) {
+    throw new Error(
+      'Approval blocked: this older Excel submission has no saved original row position. Re-submit the verified Excel list before approval.'
+    );
+  }
+
+  if (isExcel) {
+    var earlier = await supabaseClient
+      .from('student_import_rows')
+      .select('id')
+      .eq('batch_id', rowCheck.data.batch_id)
+      .eq('status', 'pending')
+      .lt('row_index', rowIndex)
+      .limit(1);
+
+    if (earlier.error) throw earlier.error;
+
+    if ((earlier.data || []).length) {
+      throw new Error(
+        'Approval blocked: approve earlier Excel rows in their original order first.'
+      );
+    }
+  }
+
+  var result = await supabaseClient.rpc(
+    'approve_student_import_row',
+    { p_import_row_id: importRowId }
+  );
+
   if (result.error) throw result.error;
-  var data = Array.isArray(result.data) ? result.data[0] : result.data;
-  if (data && (data.success === false || data.error)) throw new Error(data.error || data.message || 'Student approval failed.');
+
+  var data = Array.isArray(result.data)
+    ? result.data[0]
+    : result.data;
+
+  if (data && (data.success === false || data.error)) {
+    throw new Error(
+      data.error || data.message || 'Student approval failed.'
+    );
+  }
+
   var sid = data && (data.sid || data.student_sid) || '';
   var studentId = data && (data.student_id || data.id) || '';
-  return { data: data, sid: sid, studentId: studentId };
+
+  return {
+    data: data,
+    sid: sid,
+    studentId: studentId
+  };
 }
 
 async function rejectStudentImportRow(importRowId, reason) {
@@ -4068,7 +4298,17 @@ function bindStudentDatabaseEvents(root) {
           errorCell.textContent = row._errors.join(', ') || 'Valid';
           errorCell.style.color = row._errors.length ? '#b00020' : '#176b2c';
         });
-        var valid = studentDbState.draftRows.filter(function(row) { return row._errors.length === 0; }).map(function(row) { var copy = Object.assign({}, row); delete copy._row; delete copy._errors; return copy; });
+        var valid = studentDbState.draftRows
+        .filter(function(row) {
+          return row._errors.length === 0;
+        })
+        .map(function(row) {
+          var copy = Object.assign({}, row);
+          delete copy._errors;
+
+          // Preserve _row for submitStudentForApproval().
+          return copy;
+        });
         if (!valid.length) { showToast('There are no valid rows to submit.', 'error'); return; }
         this.disabled = true; this.textContent = 'Submitting…';
         try { await submitStudentForApproval(valid, root.querySelector('#studentSubmissionClass').value, 'excel'); root.querySelector('#studentSubmitStatus').innerHTML = '<p class="alert alert-success">' + valid.length + ' student row(s) submitted and awaiting Administrator approval.</p>'; target.innerHTML = ''; }
@@ -4087,12 +4327,16 @@ function bindStudentDatabaseEvents(root) {
   var approveAllButton = root.querySelector('#approveAllStudentsBtn');
   if (approveAllButton) approveAllButton.addEventListener('click', async function() {
     var pendingRows = studentDbState.pending.filter(function(row) { return String(row.status || '').toLowerCase() === 'pending'; });
+    pendingRows.sort(function(a, b) {
+      return Number(a.row_index) - Number(b.row_index);
+    });
     if (!pendingRows.length) return;
     if (!window.confirm('Approve all ' + pendingRows.length + ' pending student submissions?')) return;
     this.disabled = true;
     this.textContent = 'Approving…';
     var approvedCount = 0, failedCount = 0;
     var batchIds = [];
+    var approvalErrors = [];
     for (var i = 0; i < pendingRows.length; i++) {
       try {
         await approveStudentImportRow(pendingRows[i].id);
@@ -4101,14 +4345,47 @@ function bindStudentDatabaseEvents(root) {
         if (pendingRows[i].batch_id && batchIds.indexOf(pendingRows[i].batch_id) === -1) batchIds.push(pendingRows[i].batch_id);
       } catch (error) {
         failedCount++;
-        console.error('Bulk student approval failed for row ' + pendingRows[i].id + ':', error);
+
+        var failure = {
+          row_index: pendingRows[i].row_index,
+          student: pendingRows[i].full_name,
+          row_id: pendingRows[i].id,
+          message: error && error.message ? error.message : String(error),
+          code: error && error.code ? error.code : '',
+          details: error && error.details ? error.details : '',
+          hint: error && error.hint ? error.hint : ''
+        };
+
+        approvalErrors.push(failure);
+
+        console.error(
+          'Bulk student approval failed:',
+          failure
+        );
       }
     }
     try {
       for (var b = 0; b < batchIds.length; b++) await refreshStudentBatchStatus(batchIds[b]);
       await loadPendingStudentApprovals();
       renderStudentDatabaseWorkspace();
-      showToast(approvedCount + ' student(s) approved' + (failedCount ? '; ' + failedCount + ' failed.' : '.'), failedCount ? 'info' : 'success');
+      showToast(
+        approvedCount + ' student(s) approved; ' +
+        failedCount + ' failed.',
+        failedCount ? 'info' : 'success'
+      );
+
+      if (approvalErrors.length) {
+        var firstError = approvalErrors[0];
+
+        window.alert(
+          'First approval failure\n\n' +
+          'Student: ' + firstError.student + '\n' +
+          'Error: ' + firstError.message + '\n' +
+          'Code: ' + (firstError.code || 'Not provided') + '\n' +
+          'Details: ' + (firstError.details || 'Not provided') + '\n' +
+          'Hint: ' + (firstError.hint || 'Not provided')
+        );
+      }
     } catch (error) { studentDbError(error, 'Some approvals completed, but the displayed statuses could not be refreshed.'); }
   });
   var rejectAllButton = root.querySelector('#rejectAllStudentsBtn');
