@@ -4333,6 +4333,7 @@ function bindStudentDatabaseEvents(root) {
     this.textContent = 'Approving…';
     var approvedCount = 0, failedCount = 0;
     var batchIds = [];
+    var approvalErrors = [];
     for (var i = 0; i < pendingRows.length; i++) {
       try {
         await approveStudentImportRow(pendingRows[i].id);
@@ -4341,14 +4342,47 @@ function bindStudentDatabaseEvents(root) {
         if (pendingRows[i].batch_id && batchIds.indexOf(pendingRows[i].batch_id) === -1) batchIds.push(pendingRows[i].batch_id);
       } catch (error) {
         failedCount++;
-        console.error('Bulk student approval failed for row ' + pendingRows[i].id + ':', error);
+
+        var failure = {
+          row_index: pendingRows[i].row_index,
+          student: pendingRows[i].full_name,
+          row_id: pendingRows[i].id,
+          message: error && error.message ? error.message : String(error),
+          code: error && error.code ? error.code : '',
+          details: error && error.details ? error.details : '',
+          hint: error && error.hint ? error.hint : ''
+        };
+
+        approvalErrors.push(failure);
+
+        console.error(
+          'Bulk student approval failed:',
+          failure
+        );
       }
     }
     try {
       for (var b = 0; b < batchIds.length; b++) await refreshStudentBatchStatus(batchIds[b]);
       await loadPendingStudentApprovals();
       renderStudentDatabaseWorkspace();
-      showToast(approvedCount + ' student(s) approved' + (failedCount ? '; ' + failedCount + ' failed.' : '.'), failedCount ? 'info' : 'success');
+      showToast(
+        approvedCount + ' student(s) approved; ' +
+        failedCount + ' failed.',
+        failedCount ? 'info' : 'success'
+      );
+
+      if (approvalErrors.length) {
+        var firstError = approvalErrors[0];
+
+        window.alert(
+          'First approval failure\n\n' +
+          'Student: ' + firstError.student + '\n' +
+          'Error: ' + firstError.message + '\n' +
+          'Code: ' + (firstError.code || 'Not provided') + '\n' +
+          'Details: ' + (firstError.details || 'Not provided') + '\n' +
+          'Hint: ' + (firstError.hint || 'Not provided')
+        );
+      }
     } catch (error) { studentDbError(error, 'Some approvals completed, but the displayed statuses could not be refreshed.'); }
   });
   var rejectAllButton = root.querySelector('#rejectAllStudentsBtn');
