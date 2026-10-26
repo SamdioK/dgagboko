@@ -115,6 +115,18 @@ th { background: #f5f5f5; font-weight: 600; }
 .masters-category-button:focus-visible { outline: 3px solid #f0b429; outline-offset: 2px; }
 .assessment-value { width: 58px !important; padding: 6px 4px !important; text-align: center; }
 @media (max-width: 420px) { .masters-category-picker { gap: 12px; } .masters-category-button { min-width: 0; flex: 1; padding: 9px 8px; } }
+.fm-assessment-card, .subject-registration-card { overflow: hidden; border: 1px solid #e5e9f5; }
+.fm-assessment-hero, .subject-registration-hero { margin: -20px -20px 18px; padding: 22px 24px; background: linear-gradient(125deg, #536bd8, #7352a6); color: #fff; }
+.fm-assessment-hero p, .subject-registration-hero p { margin-top: 6px; color: rgba(255,255,255,.88); font-size: 13px; line-height: 1.5; }
+.fm-assessment-section, .sr-subject-group { padding: 16px; margin: 14px 0; border: 1px solid #e7eaf3; border-radius: 10px; background: #fafbff; }
+.fm-student-summary { padding: 14px; border-left: 4px solid #667eea; background: #f3f5ff; border-radius: 7px; line-height: 1.7; }
+.fm-assessment-card h3, .subject-registration-card h3 { color: #34436f; }
+.sr-subject-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 9px; margin-top: 12px; }
+.sr-subject-option { display: flex; gap: 9px; align-items: center; padding: 11px 12px; border: 1px solid #e1e6f2; border-radius: 8px; background: #fff; cursor: pointer; transition: border-color .15s, background .15s; }
+.sr-subject-option:hover { border-color: #7a8ce0; background: #f7f8ff; }
+.sr-subject-option input { accent-color: #667eea; }
+.sr-trade-select { width: 100%; max-width: 620px; padding: 10px; border: 1px solid #d7dcef; border-radius: 7px; background: #fff; font-size: 14px; }
+.sr-actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 12px 0; }
 #addStBtn { padding: 7px 12px; border-radius: 4px; font-size: 12px; }
 @media (max-width: 768px) { .grid-2, .grid-3 { grid-template-columns: 1fr; } .header-content { flex-direction: column; gap: 10px; } .management-profile { flex-direction: column; } .student-class-picker-group { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; } }
 @media (max-width: 420px) { .student-class-picker-group { grid-template-columns: 1fr; } .student-class-level { padding: 10px; } }
@@ -1504,12 +1516,12 @@ async function renderSubjectRegistration() {
       return '<option value="' + escapeManagementText(term.id) + '"' + (term.is_current ? ' selected' : '') + '>' + escapeManagementText(term.name) + '</option>';
     }).join('');
 
-    root.innerHTML = '<div class="card"><h2>Subject Registration</h2>' +
-      '<p>Confirm the academic session, term, and assigned class arm, then select the offered subjects. Registered subjects will be listed alphabetically on student results. Click Proceed to begin.</p>' +
-      '<div class="grid grid-2" style="margin-top:18px"><div class="input-group"><label>Academic Session</label><select id="srSession">' + sessionOptions + '</select></div>' +
-      '<div class="input-group"><label>Term</label><select id="srTerm">' + termOptions + '</select></div>' +
-      '<div class="input-group"><label>Assigned Class Arm</label><select id="srClass"></select></div></div>' +
-      '<button class="btn btn-primary" id="srProceed" type="button">Proceed</button><div id="srSubjectsPanel" style="margin-top:18px"></div></div>';
+    root.innerHTML = '<div class="card subject-registration-card"><div class="subject-registration-hero"><h2>Subject Registration</h2>' +
+      '<p>Choose the subjects offered to this class for the selected session and term. Core subjects can be selected individually; choose at most one trade subject.</p></div>' +
+      '<div class="grid grid-2"><div class="input-group"><label for="srSession">Academic Session</label><select id="srSession">' + sessionOptions + '</select></div>' +
+      '<div class="input-group"><label for="srTerm">Term</label><select id="srTerm">' + termOptions + '</select></div>' +
+      '<div class="input-group"><label for="srClass">Assigned Class Arm</label><select id="srClass"></select></div></div>' +
+      '<button class="btn btn-primary" id="srProceed" type="button">Load Subjects</button><div id="srSubjectsPanel" style="margin-top:18px"></div></div>';
 
     var sessionSelect = root.querySelector('#srSession');
     var termSelect = root.querySelector('#srTerm');
@@ -1549,10 +1561,20 @@ async function renderSubjectRegistration() {
       var allowedSubjectNames = new Set(subjectGroups.core.concat(subjectGroups.trade).map(function(name) {
         return String(name || '').trim().toLowerCase();
       }));
+      var seenSubjectNames = new Set();
       var filteredSubjects = subjects.filter(function(subject) {
-        return allowedSubjectNames.has(String(subject.name || '').trim().toLowerCase());
+        var normalizedName = String(subject.name || '').trim().replace(/\s+/g, ' ').toLowerCase();
+        if (!normalizedName || !allowedSubjectNames.has(normalizedName) || seenSubjectNames.has(normalizedName)) return false;
+        seenSubjectNames.add(normalizedName);
+        return true;
       }).sort(function(a, b) {
         return String(a.name || '').trim().localeCompare(String(b.name || '').trim(), undefined, { sensitivity: 'base' });
+      });
+      var coreSubjects = filteredSubjects.filter(function(subject) {
+        return subjectGroups.core.some(function(name) { return String(name).trim().toLowerCase() === String(subject.name || '').trim().toLowerCase(); });
+      });
+      var tradeOptions = filteredSubjects.filter(function(subject) {
+        return subjectGroups.trade.some(function(name) { return String(name).trim().toLowerCase() === String(subject.name || '').trim().toLowerCase(); });
       });
 
       proceedButton.disabled = true;
@@ -1577,20 +1599,33 @@ async function renderSubjectRegistration() {
         subjectRegistrationState.subjects = filteredSubjects;
         subjectRegistrationState.selectedIds = selectedIds;
         if (!filteredSubjects.length) {
-          panel.innerHTML = '<p class="alert alert-warning">No matching active subjects were found in Supabase for ' + escapeManagementText(selectedClass.class_name) + '. Check the subject catalogue and ensure its subject names match the approved class subject list.</p>';
+          panel.innerHTML = '<p class="alert alert-warning">No matching active subjects were found in Supabase for ' + escapeManagementText(selectedClass.class_name) + '. Check that the active subject catalogue matches the approved class subject list.</p>';
           return;
         }
-        panel.innerHTML = '<h3>Choose Offered Subjects</h3><p>These subjects apply to every student in this class arm for the selected session and term.</p>' +
-          '<div style="display:flex;gap:8px;flex-wrap:wrap;margin:12px 0"><button class="btn" type="button" id="srSelectAll">Select All</button><button class="btn" type="button" id="srClearAll">Clear All</button></div>' +
-          '<div id="srSubjectList" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:8px"></div>' +
-          '<button class="btn btn-primary" type="button" id="srSave" style="margin-top:16px">Save Subject Registration</button>';
+        var selectedTrade = tradeOptions.find(function(subject) {
+          return subjectRegistrationState.selectedIds.indexOf(String(subject.id)) !== -1;
+        });
+        if (selectedTrade) {
+          subjectRegistrationState.selectedIds = subjectRegistrationState.selectedIds.filter(function(id) {
+            return !tradeOptions.some(function(subject) { return String(subject.id) === String(id); });
+          });
+          subjectRegistrationState.selectedIds.push(String(selectedTrade.id));
+        }
+        panel.innerHTML = '<div class="sr-subject-group"><h3>Core Subjects</h3><p style="color:#667085;margin-top:5px">Select all core subjects offered, or choose them individually.</p>' +
+          '<div class="sr-actions"><button class="btn" type="button" id="srSelectAll">Select All Core</button><button class="btn" type="button" id="srClearAll" style="background:#eee">Clear Core</button></div>' +
+          '<div id="srSubjectList" class="sr-subject-list"></div></div>' +
+          '<div class="sr-subject-group"><h3>Trade Subject <span style="font-size:12px;font-weight:400;color:#667085">(optional · choose one)</span></h3>' +
+          '<p style="color:#667085;margin:5px 0 10px">Only one trade subject can be registered for this class.</p>' +
+          '<select id="srTradeSubject" class="sr-trade-select"><option value="">No trade subject</option>' +
+          tradeOptions.map(function(subject) { return '<option value="' + escapeManagementText(subject.id) + '"' + (selectedTrade && String(selectedTrade.id) === String(subject.id) ? ' selected' : '') + '>' + escapeManagementText(subject.name) + '</option>'; }).join('') +
+          '</select></div><button class="btn btn-success" type="button" id="srSave">Save Subject Registration</button>';
 
         var list = panel.querySelector('#srSubjectList');
         function drawSubjectCheckboxes() {
-          list.innerHTML = filteredSubjects.map(function(subject) {
+          list.innerHTML = coreSubjects.map(function(subject) {
             var selected = subjectRegistrationState.selectedIds.indexOf(String(subject.id)) !== -1;
-            return '<label style="display:flex;gap:8px;align-items:center;padding:10px;border:1px solid #ddd;border-radius:6px"><input type="checkbox" class="srSubject" value="' + escapeManagementText(subject.id) + '"' + (selected ? ' checked' : '') + '><span>' + escapeManagementText(subject.name) + (subject.is_optional ? ' (Optional)' : '') + '</span></label>';
-          }).join('') || '<p class="alert alert-info">No active subjects are available.</p>';
+            return '<label class="sr-subject-option"><input type="checkbox" class="srSubject" value="' + escapeManagementText(subject.id) + '"' + (selected ? ' checked' : '') + '><span>' + escapeManagementText(subject.name) + (subject.is_optional ? ' (Optional)' : '') + '</span></label>';
+          }).join('') || '<p class="alert alert-info">No active core subjects are available for this class.</p>';
           list.querySelectorAll('.srSubject').forEach(function(box) {
             box.addEventListener('change', function() {
               var id = String(this.value);
@@ -1600,12 +1635,23 @@ async function renderSubjectRegistration() {
           });
         }
         drawSubjectCheckboxes();
+        panel.querySelector('#srTradeSubject').addEventListener('change', function() {
+          subjectRegistrationState.selectedIds = subjectRegistrationState.selectedIds.filter(function(id) {
+            return !tradeOptions.some(function(subject) { return String(subject.id) === String(id); });
+          });
+          if (this.value) subjectRegistrationState.selectedIds.push(String(this.value));
+        });
         panel.querySelector('#srSelectAll').addEventListener('click', function() {
-          subjectRegistrationState.selectedIds = filteredSubjects.map(function(subject) { return String(subject.id); });
+          var tradeIds = subjectRegistrationState.selectedIds.filter(function(id) {
+            return tradeOptions.some(function(subject) { return String(subject.id) === String(id); });
+          });
+          subjectRegistrationState.selectedIds = Array.from(new Set(coreSubjects.map(function(subject) { return String(subject.id); }).concat(tradeIds)));
           drawSubjectCheckboxes();
         });
         panel.querySelector('#srClearAll').addEventListener('click', function() {
-          subjectRegistrationState.selectedIds = [];
+          subjectRegistrationState.selectedIds = subjectRegistrationState.selectedIds.filter(function(id) {
+            return tradeOptions.some(function(subject) { return String(subject.id) === String(id); });
+          });
           drawSubjectCheckboxes();
         });
         panel.querySelector('#srSave').addEventListener('click', async function() {
@@ -1629,7 +1675,7 @@ async function renderSubjectRegistration() {
             var deleteResult = await supabaseClient.from('class_subject_registration_items').delete()
               .eq('registration_id', registrationId).eq('school_id', schoolId);
             if (deleteResult.error) throw deleteResult.error;
-            var selected = subjectRegistrationState.selectedIds;
+            var selected = Array.from(new Set(subjectRegistrationState.selectedIds.map(String)));
             if (selected.length) {
               var insertResult = await supabaseClient.from('class_subject_registration_items').insert(selected.map(function(subjectId) {
                 return { registration_id: registrationId, school_id: schoolId, subject_id: subjectId };
@@ -1740,18 +1786,18 @@ async function loadFormMasterOfficialEnrolments() {
 function renderFormMasterInput() {
   var root = document.getElementById('inputTab');
   if (!root) return;
-  root.innerHTML = '<div class="card"><h2>Student Profile and Domain Assessment</h2>' +
-    '<p class="alert alert-info">Select an officially enrolled student to view their profile and registered passport, then complete the Form Master assessment. Academic scores are entered separately by authorised score-entry roles.</p>' +
-    '<div class="grid grid-2"><div class="input-group"><label for="fmAssessmentTerm">Term</label><select id="fmAssessmentTerm"></select></div>' +
+  root.innerHTML = '<div class="card fm-assessment-card"><div class="fm-assessment-hero"><h2>Form Master Assessment</h2>' +
+    '<p>Review the official student profile, record attendance and fees, then complete the learner development ratings. Subject scores are managed separately by authorised score-entry roles.</p></div>' +
+    '<div class="fm-assessment-section"><h3 style="margin-bottom:12px">Student &amp; Term</h3><div class="grid grid-2"><div class="input-group"><label for="fmAssessmentTerm">Term</label><select id="fmAssessmentTerm"></select></div>' +
     '<div class="input-group"><label for="fmAssessmentStudent">Official Student</label><select id="fmAssessmentStudent"><option value="">Loading official enrolments…</option></select></div></div>' +
-    '<div id="fmOfficialStudentProfile" class="alert alert-info">Select an officially enrolled student.</div>' +
-    '<div id="formMasterPassportPreview" class="card"><p>Select a student to view their registered passport.</p></div>' +
-    '<div class="grid grid-2"><div class="input-group"><label for="fmAttendanceDays">Days Present (out of ' + ((Number(portalSettings.termWeeks) || 12) * 5) + ' school days)</label><input type="number" id="fmAttendanceDays" min="0" max="' + ((Number(portalSettings.termWeeks) || 12) * 5) + '"></div>' +
-    '<div class="input-group"><label for="fmNextTermFees">Next Term School Fees Amount</label><input type="number" id="fmNextTermFees" min="0" step="0.01" placeholder="Enter amount"></div></div>' +
-    '<h3>Affective Domain</h3><div id="affectiveSection" style="background:#f9f9f9;padding:15px;border-radius:8px;margin:10px 0 20px"></div>' +
-    '<h3>Psychomotor Domain</h3><div id="psychomotorSection" style="background:#f9f9f9;padding:15px;border-radius:8px;margin:10px 0 20px"></div>' +
-    '<div class="input-group"><label for="formMasterComment">Form Master Comment</label><textarea id="formMasterComment" rows="3"></textarea></div>' +
-    '<button type="button" class="btn btn-success" id="saveStudentBtn">Save Form Master Assessment</button><div id="fmAssessmentStatus" role="status" aria-live="polite" style="margin-top:10px"></div></div>';
+    '<div id="fmOfficialStudentProfile" class="fm-student-summary">Select an officially enrolled student.</div>' +
+    '<div id="formMasterPassportPreview" class="card" style="margin:14px 0 0"><p>Select a student to view their registered passport.</p></div></div>' +
+    '<div class="fm-assessment-section"><h3 style="margin-bottom:12px">Attendance &amp; Fees</h3><div class="grid grid-2"><div class="input-group"><label for="fmAttendanceDays">Days Present (out of ' + ((Number(portalSettings.termWeeks) || 12) * 5) + ' school days)</label><input type="number" id="fmAttendanceDays" min="0" max="' + ((Number(portalSettings.termWeeks) || 12) * 5) + '"></div>' +
+    '<div class="input-group"><label for="fmNextTermFees">Next Term School Fees Amount</label><input type="number" id="fmNextTermFees" min="0" step="0.01" placeholder="Enter amount"></div></div></div>' +
+    '<div class="fm-assessment-section"><h3>Affective Domain</h3><p style="color:#667085;font-size:12px;margin:5px 0 10px">Rate each learner behaviour from 1 (needs support) to 5 (excellent).</p><div id="affectiveSection"></div></div>' +
+    '<div class="fm-assessment-section"><h3>Psychomotor Domain</h3><p style="color:#667085;font-size:12px;margin:5px 0 10px">Rate practical, physical and creative skills from 1 to 5.</p><div id="psychomotorSection"></div></div>' +
+    '<div class="fm-assessment-section"><div class="input-group"><label for="formMasterComment">Form Master Comment</label><textarea id="formMasterComment" rows="3" placeholder="Add a concise comment on the student’s progress"></textarea></div>' +
+    '<button type="button" class="btn btn-success" id="saveStudentBtn">Save Form Master Assessment</button><div id="fmAssessmentStatus" role="status" aria-live="polite" style="margin-top:10px"></div></div></div>';
 
   var termSelect = root.querySelector('#fmAssessmentTerm');
   termSelect.innerHTML = (availableAssessmentTerms || []).map(function(term) {
