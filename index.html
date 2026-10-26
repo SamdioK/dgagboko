@@ -439,6 +439,7 @@ var currentUser = null;
 var currentSchool = null;
 var classArms = [];
 var activeFormMasterArmId = '';
+var formMasterStudentEnrolments = [];
 var formMasterDetailsMinimized = false;
 var formMasterDetailsClosed = false;
 var formMasters = [];
@@ -983,7 +984,7 @@ async function handleSupabaseLogin(userType, errorDiv) {
 
     var selectedRole = expectedRoles[userType].find(function(role) { return activeRoles.indexOf(role) !== -1; });
     var appType = { administrator: 'admin', sub_administrator: 'subadmin', form_master: 'formmaster', subject_teacher: 'subjectteacher', portal_developer: 'developer', student: 'student' }[selectedRole];
-    currentUser = { type: appType, id: profile.id, name: profile.full_name, email: authResult.data.user.email, profile: profile };
+    currentUser = { type: appType, role: selectedRole, id: profile.id, name: profile.full_name, email: authResult.data.user.email, profile: profile };
     if (appType === 'formmaster') {
       var formMasterAssignmentsResult = await supabaseClient.from('form_master_assignments')
         .select('id,class_id,teacher_id,academic_session_id')
@@ -1005,6 +1006,7 @@ async function handleSupabaseLogin(userType, errorDiv) {
         throw new Error('Select a class assigned to your Form Master account for the active academic session.');
       }
       currentUser.arm = assignedClass.class_name;
+      currentUser.classId = assignedClass.id;
       if (profile.must_change_password === true) {
         formMasterPasswordChangePending = true;
         document.getElementById('armPassword').value = '';
@@ -1181,6 +1183,7 @@ async function handleLogout() {
   var wasStudent = currentUser && currentUser.type === 'student';
   currentUser = null;
   if (wasStudent) students = [];
+  formMasterStudentEnrolments = [];
   authenticatedProfile = null;
   studentPasswordChangePending = false;
   formMasterPasswordChangePending = false;
@@ -1655,6 +1658,15 @@ async function showFormMasterStudentPassport(studentId) {
   if (!preview) return;
   preview.innerHTML = '<p>Loading passport…</p>';
   if (!studentId) { preview.innerHTML = '<p>Select a student to view their passport.</p>'; return; }
+  var enrolledStudent = (formMasterStudentEnrolments || []).find(function(item) {
+    return String(item.student && item.student.id) === String(studentId);
+  });
+  if (!enrolledStudent || !currentUser || currentUser.type !== 'formmaster' ||
+      !authenticatedProfile || !activeAcademicSession ||
+      String(enrolledStudent.enrolment.class_id) !== String(currentUser.classId)) {
+    preview.innerHTML = '<p class="alert alert-error">This student is not in your verified class enrolment for the active session.</p>';
+    return;
+  }
   try {
     var result = await supabaseClient.from('student_passports').select('storage_path')
       .eq('school_id', authenticatedProfile.school_id).eq('student_id', studentId).maybeSingle();
@@ -1690,6 +1702,246 @@ async function resolveFormMasterPassportStudentId(className, studentName) {
   } catch (error) {
     console.error('Could not match Form Master student to official record:', error);
     return null;
+  }
+}
+
+async function loadFormMasterOfficialEnrolments() {
+  if (!currentUser || currentUser.type !== 'formmaster' || !authenticatedProfile ||
+      !authenticatedProfile.school_id || !activeAcademicSession || !currentUser.classId) {
+    throw new Error('An authenticated Form Master assignment and active academic session are required.');
+  }
+
+  var assignmentsResult = await supabaseClient.from('form_master_assignments')
+    .select('class_id')
+    .eq('school_id', authenticatedProfile.school_id)
+    .eq('teacher_id', authenticatedProfile.id)
+    .eq('academic_session_id', activeAcademicSession.id)
+    .eq('class_id', currentUser.classId);
+  if (assignmentsResult.error) throw assignmentsResult.error;
+  if (!(assignmentsResult.data || []).length) {
+    throw new Error('Your verified class assignment is not active for this academic session. Contact the School Administrator.');
+  }
+
+  var enrolmentsResult = await supabaseClient.from('student_enrolments')
+    .select('student_id,register_number,sid,class_id,archived_at,students(id,admission_number,first_name,middle_name,last_name,gender,date_of_birth)')
+    .eq('school_id', authenticatedProfile.school_id)
+    .eq('class_id', currentUser.classId)
+    .eq('academic_session_id', activeAcademicSession.id)
+    .is('archived_at', null)
+    .order('register_number', { ascending: true });
+  if (enrolmentsResult.error) throw enrolmentsResult.error;
+  formMasterStudentEnrolments = (enrolmentsResult.data || []).map(function(enrolment) {
+    var student = Array.isArray(enrolment.students) ? enrolment.students[0] : enrolment.students;
+    return student ? { enrolment: enrolment, student: student } : null;
+  }).filter(Boolean);
+  return formMasterStudentEnrolments;
+}
+
+function renderFormMasterInput() {
+  var root = document.getElementById('inputTab');
+  if (!root) return;
+  root.innerHTML = '<div class="card"><h2>Student Profile and Domain Assessment</h2>' +
+    '<p class="alert alert-info">Select an officially enrolled student to view their profile and registered passport, then complete the Form Master assessment. Academic scores are entered separately by authorised score-entry roles.</p>' +
+    '<div class="grid grid-2"><div class="input-group"><label for="fmAssessmentTerm">Term</label><select id="fmAssessmentTerm"></select></div>' +
+    '<div class="input-group"><label for="fmAssessmentStudent">Official Student</label><select id="fmAssessmentStudent"><option value="">Loading official enrolments…</option></select></div></div>' +
+    '<div id="fmOfficialStudentProfile" class="alert alert-info">Select an officially enrolled student.</div>' +
+    '<div id="formMasterPassportPreview" class="card"><p>Select a student to view their registered passport.</p></div>' +
+    '<div class="grid grid-2"><div class="input-group"><label for="fmAttendanceDays">Days Present (out of ' + ((Number(portalSettings.termWeeks) || 12) * 5) + ' school days)</label><input type="number" id="fmAttendanceDays" min="0" max="' + ((Number(portalSettings.termWeeks) || 12) * 5) + '"></div>' +
+    '<div class="input-group"><label for="fmNextTermFees">Next Term School Fees Amount</label><input type="number" id="fmNextTermFees" min="0" step="0.01" placeholder="Enter amount"></div></div>' +
+    '<h3>Affective Domain</h3><div id="affectiveSection" style="background:#f9f9f9;padding:15px;border-radius:8px;margin:10px 0 20px"></div>' +
+    '<h3>Psychomotor Domain</h3><div id="psychomotorSection" style="background:#f9f9f9;padding:15px;border-radius:8px;margin:10px 0 20px"></div>' +
+    '<div class="input-group"><label for="formMasterComment">Form Master Comment</label><textarea id="formMasterComment" rows="3"></textarea></div>' +
+    '<button type="button" class="btn btn-success" id="saveStudentBtn">Save Form Master Assessment</button><div id="fmAssessmentStatus" role="status" aria-live="polite" style="margin-top:10px"></div></div>';
+
+  var termSelect = root.querySelector('#fmAssessmentTerm');
+  termSelect.innerHTML = (availableAssessmentTerms || []).map(function(term) {
+    return '<option value="' + escapeManagementText(term.id) + '"' +
+      (activeAssessmentTerm && String(term.id) === String(activeAssessmentTerm.id) ? ' selected' : '') + '>' +
+      escapeManagementText(term.name) + '</option>';
+  }).join('');
+  var studentSelect = root.querySelector('#fmAssessmentStudent');
+  var profile = root.querySelector('#fmOfficialStudentProfile');
+  var status = root.querySelector('#fmAssessmentStatus');
+  renderAffective();
+  renderPsychomotor();
+
+  async function loadSavedAssessment() {
+    var studentId = studentSelect.value;
+    var termId = termSelect.value;
+    var selected = formMasterStudentEnrolments.find(function(item) {
+      return String(item.student.id) === String(studentId);
+    });
+    affectiveDomains.forEach(function(domain) { affectiveRatings[domain] = 5; });
+    psychomotorDomains.forEach(function(domain) { psychomotorRatings[domain] = 5; });
+    root.querySelector('#formMasterComment').value = '';
+    root.querySelector('#fmAttendanceDays').value = '';
+    root.querySelector('#fmNextTermFees').value = '';
+    if (selected) {
+      var student = selected.student;
+      var fullName = [student.first_name, student.middle_name, student.last_name].filter(Boolean).join(' ');
+      profile.innerHTML = '<strong>' + escapeManagementText(fullName || 'Student') + '</strong><br>' +
+        '<strong>SID:</strong> ' + escapeManagementText(selected.enrolment.sid || '—') + ' &nbsp; ' +
+        '<strong>Admission No:</strong> ' + escapeManagementText(student.admission_number || '—') + '<br>' +
+        '<strong>Gender:</strong> ' + escapeManagementText(student.gender || '—') + ' &nbsp; ' +
+        '<strong>Date of Birth:</strong> ' + escapeManagementText(studentDbDate(student.date_of_birth) || '—');
+      await showFormMasterStudentPassport(student.id);
+      try {
+        var result = await supabaseClient.from('form_master_student_assessments').select('*')
+          .eq('school_id', authenticatedProfile.school_id)
+          .eq('student_id', student.id)
+          .eq('academic_session_id', activeAcademicSession.id)
+          .eq('term_id', termId).maybeSingle();
+        if (result.error) throw result.error;
+        var saved = result.data;
+        if (saved) {
+          if (saved.affective_ratings) affectiveRatings = Object.assign(affectiveRatings, saved.affective_ratings);
+          if (saved.psychomotor_ratings) psychomotorRatings = Object.assign(psychomotorRatings, saved.psychomotor_ratings);
+          root.querySelector('#formMasterComment').value = saved.form_master_comment || '';
+          root.querySelector('#fmAttendanceDays').value = saved.attendance_days == null ? '' : saved.attendance_days;
+          root.querySelector('#fmNextTermFees').value = saved.next_term_fees == null ? '' : saved.next_term_fees;
+        }
+      } catch (error) {
+        status.className = 'alert alert-error';
+        status.textContent = 'Could not load the saved Form Master assessment: ' + (error.message || 'Unknown error');
+      }
+    } else {
+      profile.textContent = 'Select an officially enrolled student.';
+      await showFormMasterStudentPassport(null);
+    }
+    renderAffective();
+    renderPsychomotor();
+  }
+
+  studentSelect.addEventListener('change', function() {
+    status.className = '';
+    status.textContent = '';
+    loadSavedAssessment();
+  });
+  termSelect.addEventListener('change', loadSavedAssessment);
+  root.querySelector('#saveStudentBtn').addEventListener('click', function() {
+    if (currentUser.type === 'formmaster') {
+      saveFormMasterAssessment();
+      return;
+    }
+    saveStudent();
+  });
+
+  loadFormMasterOfficialEnrolments().then(function(enrolments) {
+    if (!studentSelect.isConnected) return;
+    studentSelect.innerHTML = '<option value="">Select an officially enrolled student</option>' + enrolments.map(function(item) {
+      var student = item.student;
+      var name = [student.first_name, student.middle_name, student.last_name].filter(Boolean).join(' ');
+      return '<option value="' + escapeManagementText(student.id) + '">' +
+        escapeManagementText(item.enrolment.register_number || '—') + ' — ' +
+        escapeManagementText(name || student.admission_number || 'Student') + ' (' +
+        escapeManagementText(item.enrolment.sid || student.admission_number || 'No SID') + ')</option>';
+    }).join('');
+    if (!enrolments.length) {
+      studentSelect.innerHTML = '<option value="">No active student enrolments in your assigned class</option>';
+      profile.className = 'alert alert-warning';
+      profile.textContent = 'No active student enrolments were found for your assigned class and the active academic session.';
+    }
+  }).catch(function(error) {
+    studentSelect.innerHTML = '<option value="">Official enrolments unavailable</option>';
+    profile.className = 'alert alert-error';
+    profile.textContent = 'Could not load official student enrolments: ' + (error.message || 'Unknown error');
+  });
+}
+
+async function saveFormMasterAssessment() {
+  var status = document.getElementById('fmAssessmentStatus');
+  var saveButton = document.getElementById('saveStudentBtn');
+  function fail(message) {
+    if (status) { status.className = 'alert alert-error'; status.textContent = message; }
+    showToast(message, 'error');
+  }
+  if (!currentUser || currentUser.type !== 'formmaster' || currentUser.role !== 'form_master' ||
+      !authenticatedProfile || String(currentUser.id) !== String(authenticatedProfile.id) ||
+      authenticatedProfile.is_active !== true) {
+    fail('Only an active authenticated Form Master can save this assessment.');
+    return;
+  }
+  if (!supabaseClient || !authenticatedProfile.school_id || !activeAcademicSession || !currentUser.classId) {
+    fail('An authenticated Form Master, assigned class, and active academic session are required.');
+    return;
+  }
+  var studentId = document.getElementById('fmAssessmentStudent').value;
+  var termId = document.getElementById('fmAssessmentTerm').value;
+  var enrolment = (formMasterStudentEnrolments || []).find(function(item) {
+    return String(item.student.id) === String(studentId);
+  });
+  var term = availableAssessmentTerms.find(function(item) { return String(item.id) === String(termId); });
+  if (!studentId || !enrolment || !term) {
+    fail('Select an official student and a configured term before saving.');
+    return;
+  }
+  var attendanceInput = document.getElementById('fmAttendanceDays').value;
+  var attendanceDays = attendanceInput === '' ? null : Number(attendanceInput);
+  var schoolDays = (Number(portalSettings.termWeeks) || 12) * 5;
+  var feesInput = document.getElementById('fmNextTermFees').value.trim();
+  var nextTermFees = feesInput === '' ? null : Number(feesInput);
+  if (attendanceDays !== null && (!Number.isInteger(attendanceDays) || attendanceDays < 0 || attendanceDays > schoolDays)) {
+    fail('Days present must be a whole number from 0 to ' + schoolDays + '.');
+    return;
+  }
+  if (nextTermFees !== null && (!isFinite(nextTermFees) || nextTermFees < 0)) {
+    fail('Enter a valid non-negative next-term school fees amount.');
+    return;
+  }
+
+  if (saveButton) { saveButton.disabled = true; saveButton.textContent = 'Saving…'; }
+  if (status) { status.className = 'alert alert-info'; status.textContent = 'Verifying your class assignment and student enrolment…'; }
+  try {
+    var sessionResult = await supabaseClient.auth.getSession();
+    var session = sessionResult && sessionResult.data && sessionResult.data.session;
+    if (sessionResult.error || !session || !session.user || String(session.user.id) !== String(authenticatedProfile.id)) {
+      throw new Error('Your authenticated Form Master session has expired or changed. Sign in again.');
+    }
+    var assignmentResult = await supabaseClient.from('form_master_assignments').select('class_id')
+      .eq('school_id', authenticatedProfile.school_id)
+      .eq('teacher_id', authenticatedProfile.id)
+      .eq('academic_session_id', activeAcademicSession.id)
+      .eq('class_id', currentUser.classId);
+    if (assignmentResult.error) throw assignmentResult.error;
+    if (!(assignmentResult.data || []).length) throw new Error('Your class assignment could not be verified for the active session.');
+
+    var enrolmentResult = await supabaseClient.from('student_enrolments').select('student_id,class_id')
+      .eq('school_id', authenticatedProfile.school_id)
+      .eq('student_id', studentId)
+      .eq('class_id', currentUser.classId)
+      .eq('academic_session_id', activeAcademicSession.id)
+      .is('archived_at', null).maybeSingle();
+    if (enrolmentResult.error) throw enrolmentResult.error;
+    if (!enrolmentResult.data) throw new Error('The selected student is no longer actively enrolled in your assigned class.');
+
+    var studentResult = await supabaseClient.from('students').select('id')
+      .eq('id', studentId).eq('school_id', authenticatedProfile.school_id).maybeSingle();
+    if (studentResult.error) throw studentResult.error;
+    if (!studentResult.data) throw new Error('The official student record could not be verified.');
+
+    var assessment = {
+      school_id: authenticatedProfile.school_id,
+      student_id: studentId,
+      class_id: currentUser.classId,
+      academic_session_id: activeAcademicSession.id,
+      term_id: term.id,
+      affective_ratings: JSON.parse(JSON.stringify(affectiveRatings)),
+      psychomotor_ratings: JSON.parse(JSON.stringify(psychomotorRatings)),
+      form_master_comment: document.getElementById('formMasterComment').value.trim(),
+      attendance_days: attendanceDays,
+      school_days: schoolDays,
+      next_term_fees: nextTermFees,
+      assessed_by: authenticatedProfile.id
+    };
+    var result = await supabaseClient.from('form_master_student_assessments')
+      .upsert(assessment, { onConflict: 'school_id,student_id,academic_session_id,term_id' });
+    if (result.error) throw result.error;
+    if (status) { status.className = 'alert alert-success'; status.textContent = 'Form Master assessment saved. Academic subject scores were not changed.'; }
+    showToast('Form Master assessment saved.', 'success');
+  } catch (error) {
+    fail('Unable to save Form Master assessment: ' + (error && error.message || 'Unknown database error.'));
+  } finally {
+    if (saveButton && saveButton.isConnected) { saveButton.disabled = false; saveButton.textContent = 'Save Form Master Assessment'; }
   }
 }
 
@@ -6465,6 +6717,7 @@ function renderTeacherSignatures() {
 
 // ===================== INPUT (MANUAL + EXCEL BULK) =====================
 function renderInput() {
+  if (currentUser.type === 'formmaster') { renderFormMasterInput(); return; }
   if (currentUser.type === 'subjectteacher') { renderSubjectTeacherInput(); return; }
 
   var selectedClass = currentUser.type === 'subadmin' ? (window.__subAdminInputArm || (classArms[0] && classArms[0].name)) : currentUser.arm;
@@ -6532,7 +6785,6 @@ function renderInput() {
         });
       }
     }
-    if (this.value) document.getElementById('studentPassport').click();
   });
   document.getElementById('term').addEventListener('change', async function() {
     var selectedTerm = availableAssessmentTerms.find(function(item) { return String(item.term_number) === this.value; }.bind(this));
@@ -6551,7 +6803,13 @@ function renderInput() {
   document.getElementById('subjectSearch').addEventListener('input', renderSubjectList);
   var tradeSelect = document.getElementById('tradeSubjectSelect');
   if (tradeSelect) tradeSelect.addEventListener('change', function() { handleTradeSubjectChange(this.value); });
-  document.getElementById('saveStudentBtn').addEventListener('click', saveStudent);
+  document.getElementById('saveStudentBtn').addEventListener('click', function() {
+    if (currentUser.type === 'formmaster') {
+      saveFormMasterAssessment();
+      return;
+    }
+    saveStudent();
+  });
   document.getElementById('clearFormBtn').addEventListener('click', clearForm);
   document.getElementById('importExcelBtn').addEventListener('click', processExcelImport);
   var downloadNamesTemplateBtn = document.getElementById('downloadNamesTemplateBtn');
