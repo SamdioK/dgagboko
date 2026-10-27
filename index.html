@@ -1055,7 +1055,12 @@ async function handleSupabaseLogin(userType, errorDiv) {
       assignment.classId = assignedClass.id;
       assignment.className = assignedClass.class_name;
       assignment.subjectId = assignedSubject.id;
-      currentUser.arm = assignedClass.class_name; currentUser.subject = assignment.subject;
+      currentUser.arm = assignedClass.class_name;
+      currentUser.subject = assignment.subject;
+      currentUser.classId = assignedClass.id;
+      currentUser.subjectId = assignedSubject.id;
+      currentUser.assignmentId = assignmentResult.data.id;
+      currentUser.academicSessionId = assignmentResult.data.academic_session_id;
     }
     if (appType === 'student') currentUser.admission = document.getElementById('studentAdmission').value.trim();
     if (appType === 'subadmin') {
@@ -6994,8 +6999,8 @@ function renderScoreInputs() {
     div.style.cssText = 'display: grid; grid-template-columns: 2fr 1fr 1fr 1fr 1fr 1fr 1fr; gap: 10px; align-items: center; margin-bottom: 10px; padding: 10px; background: #f9f9f9; border-radius: 4px;';
     var scores = subjectScores[subject];
     var total = scores.ca1 + scores.ca2 + scores.ca3 + scores.exam;
-    var grade = 'F', remark = 'Failed';
-    if (total >= 80) { grade = 'A'; remark = 'Excellent'; } else if (total >= 70) { grade = 'B'; remark = 'Very Good'; } else if (total >= 60) { grade = 'C'; remark = 'Good'; } else if (total >= 50) { grade = 'D'; remark = 'Pass'; }
+    var grade = 'E', remark = 'Poor';
+    if (total >= 75) { grade = 'A'; remark = 'Excellent'; } else if (total >= 65) { grade = 'B'; remark = 'Very Good'; } else if (total >= 55) { grade = 'C'; remark = 'Good'; } else if (total >= 40) { grade = 'D'; remark = 'Fair'; }
     div.innerHTML = '<strong style="font-size: 12px;">' + subject + (subject === selectedTradeSubject ? ' <span style="color:#e65100; font-size:10px;">(Trade)</span>' : '') + '</strong><input type="number" class="score-input" placeholder="CA1" min="0" value="' + (scores.ca1 || '') + '" data-subject="' + subject + '" data-field="ca1" max="' + config.ca1 + '"><input type="number" class="score-input" placeholder="CA2" min="0" value="' + (scores.ca2 || '') + '" data-subject="' + subject + '" data-field="ca2" max="' + config.ca2 + '"><input type="number" class="score-input" placeholder="CA3" min="0" value="' + (scores.ca3 || '') + '" data-subject="' + subject + '" data-field="ca3" max="' + config.ca3 + '"><input type="number" class="score-input" placeholder="Exam" min="0" value="' + (scores.exam || '') + '" data-subject="' + subject + '" data-field="exam" max="' + config.exam + '"><strong class="score-total" style="font-size: 12px;">' + total + '</strong><div class="score-grade" style="font-size: 11px;"><strong>' + grade + '</strong><br>' + remark + '</div>';
     container.appendChild(div);
   });
@@ -7013,8 +7018,8 @@ function renderScoreInputs() {
       var row = this.closest('.score-row');
       var scores = subjectScores[subject];
       var total = scores.ca1 + scores.ca2 + scores.ca3 + scores.exam;
-      var grade = 'F', remark = 'Failed';
-      if (total >= 80) { grade = 'A'; remark = 'Excellent'; } else if (total >= 70) { grade = 'B'; remark = 'Very Good'; } else if (total >= 60) { grade = 'C'; remark = 'Good'; } else if (total >= 50) { grade = 'D'; remark = 'Pass'; }
+      var grade = 'E', remark = 'Poor';
+      if (total >= 75) { grade = 'A'; remark = 'Excellent'; } else if (total >= 65) { grade = 'B'; remark = 'Very Good'; } else if (total >= 55) { grade = 'C'; remark = 'Good'; } else if (total >= 40) { grade = 'D'; remark = 'Fair'; }
       row.querySelector('.score-total').textContent = total;
       row.querySelector('.score-grade').innerHTML = '<strong>' + grade + '</strong><br>' + remark;
     });
@@ -7102,8 +7107,8 @@ async function saveStudent() {
       var scores = subjectScores[subject];
       var total = scores.ca1 + scores.ca2 + scores.ca3 + scores.exam;
       totalScore += total; totalObtainable += 100;
-      var grade = 'F', remark = 'Failed';
-      if (total >= 80) { grade = 'A'; remark = 'Excellent'; } else if (total >= 70) { grade = 'B'; remark = 'Very Good'; } else if (total >= 60) { grade = 'C'; remark = 'Good'; } else if (total >= 50) { grade = 'D'; remark = 'Pass'; }
+      var grade = 'E', remark = 'Poor';
+      if (total >= 75) { grade = 'A'; remark = 'Excellent'; } else if (total >= 65) { grade = 'B'; remark = 'Very Good'; } else if (total >= 55) { grade = 'C'; remark = 'Good'; } else if (total >= 40) { grade = 'D'; remark = 'Fair'; }
       subjects.push({ name: subject, ca1: scores.ca1, ca2: scores.ca2, ca3: scores.ca3, exam: scores.exam, total: total, grade: grade, remark: remark });
     });
     var avgScore = (totalScore / totalObtainable) * 100;
@@ -7126,7 +7131,7 @@ async function saveStudent() {
         if (previous) {
           ['ca1', 'ca2', 'ca3', 'exam'].forEach(function(field) { if (!sub[field]) sub[field] = previous[field] || 0; });
           sub.total = sub.ca1 + sub.ca2 + sub.ca3 + sub.exam;
-          if (sub.total >= 80) { sub.grade = 'A'; sub.remark = 'Excellent'; } else if (sub.total >= 70) { sub.grade = 'B'; sub.remark = 'Very Good'; } else if (sub.total >= 60) { sub.grade = 'C'; sub.remark = 'Good'; } else if (sub.total >= 50) { sub.grade = 'D'; sub.remark = 'Pass'; } else { sub.grade = 'F'; sub.remark = 'Failed'; }
+          if (sub.total >= 75) { sub.grade = 'A'; sub.remark = 'Excellent'; } else if (sub.total >= 65) { sub.grade = 'B'; sub.remark = 'Very Good'; } else if (sub.total >= 55) { sub.grade = 'C'; sub.remark = 'Good'; } else if (sub.total >= 40) { sub.grade = 'D'; sub.remark = 'Fair'; } else { sub.grade = 'E'; sub.remark = 'Poor'; }
         }
       });
       newStudent.totalObtained = newStudent.subjects.reduce(function(sum, sub) { return sum + sub.total; }, 0);
@@ -7170,8 +7175,8 @@ function clearForm() {
   renderSubjectList(); renderScoreInputs(); renderAffective(); renderPsychomotor();
 }
 
-// ===================== SUBJECT TEACHER INPUT =====================
-function renderSubjectTeacherInput() {
+// Legacy local score sheet; superseded by the Supabase-backed implementation below.
+function renderSubjectTeacherInputLegacyLocal() {
   var className = currentUser.arm;
   var subject = currentUser.subject;
   var config = assessmentConfig[className] || { ca1: 10, ca2: 10, ca3: 10, exam: 70 };
@@ -7224,8 +7229,8 @@ function renderSubjectTeacherInput() {
       var ca3 = parseFloat(row.querySelector('[data-field="ca3"]').value) || 0;
       var exam = parseFloat(row.querySelector('[data-field="exam"]').value) || 0;
       var total = ca1 + ca2 + ca3 + exam;
-      var grade = 'F';
-      if (total >= 80) grade = 'A'; else if (total >= 70) grade = 'B'; else if (total >= 60) grade = 'C'; else if (total >= 50) grade = 'D';
+      var grade = 'E';
+      if (total >= 75) grade = 'A'; else if (total >= 65) grade = 'B'; else if (total >= 55) grade = 'C'; else if (total >= 40) grade = 'D';
       row.querySelector('.st-total').innerHTML = '<strong>' + total + '</strong>';
       row.querySelector('.st-grade').textContent = grade;
     });
@@ -7243,8 +7248,8 @@ function renderSubjectTeacherInput() {
       var ca3 = parseFloat(row.querySelector('[data-field="ca3"]').value) || 0;
       var exam = parseFloat(row.querySelector('[data-field="exam"]').value) || 0;
       var total = ca1 + ca2 + ca3 + exam;
-      var grade = 'F', remark = 'Failed';
-      if (total >= 80) { grade = 'A'; remark = 'Excellent'; } else if (total >= 70) { grade = 'B'; remark = 'Very Good'; } else if (total >= 60) { grade = 'C'; remark = 'Good'; } else if (total >= 50) { grade = 'D'; remark = 'Pass'; }
+      var grade = 'E', remark = 'Poor';
+      if (total >= 75) { grade = 'A'; remark = 'Excellent'; } else if (total >= 65) { grade = 'B'; remark = 'Very Good'; } else if (total >= 55) { grade = 'C'; remark = 'Good'; } else if (total >= 40) { grade = 'D'; remark = 'Fair'; }
 
       var subEntry = { name: subject, ca1: ca1, ca2: ca2, ca3: ca3, exam: exam, total: total, grade: grade, remark: remark };
       var idx = student.subjects.findIndex(function(sub) { return sub.name === subject; });
@@ -7412,8 +7417,9 @@ function processExcelImport() {
           var exam = parseFloat(sr['Exam']) || 0;
           var total = ca1 + ca2 + ca3 + exam;
           totalScore += total; totalObtainable += 100;
-          var grade = 'F', remark = 'Failed';
-          if (total >= 80) { grade = 'A'; remark = 'Excellent'; } else if (total >= 70) { grade = 'B'; remark = 'Very Good'; } else if (total >= 60) { grade = 'C'; remark = 'Good'; } else if (total >= 50) { grade = 'D'; remark = 'Pass'; }
+              var grade = 'E', remark = 'Poor';
+    if (total >= 75) { grade = 'A'; remark = 'Excellent'; } else if (total >= 65) { grade = 'B'; remark = 'Very Good'; } else if (total >= 55) { grade = 'C'; remark = 'Good'; } else if (total >= 40) { grade = 'D'; remark = 'Fair'; }
+
           return { name: sr['Subject'] || 'Unknown Subject', ca1: ca1, ca2: ca2, ca3: ca3, exam: exam, total: total, grade: grade, remark: remark };
         });
 
@@ -7953,7 +7959,7 @@ function buildStudentSheetHTML(student) {
     '<div style="margin-top:10px;">' + formMasterDisplay + '<br><strong>Form Master Comment:</strong> ' + escapeManagementText(student.formMasterComment || 'No comment') + '</div>' +
     '<div style="margin-top:6px; padding-top:6px; border-top:1px dashed #999;"><strong>Principal\'s Comment:</strong> ' + generatePrincipalComment(student) + '<div style="display:flex; flex-direction:column; align-items:flex-start; gap:0; margin-top:3px; line-height:1;">' + (schoolInfo.principalSignature ? '<img src="' + schoolInfo.principalSignature + '" alt="Principal signature" style="max-width:80px; max-height:34px; object-fit:contain;">' : '') + '<strong style="font-size:10px; color:#111;">' + (schoolInfo.principalName || 'Principal') + '</strong></div></div>' +
     '<div class="result-footer"><div class="result-document-date">Document Date: ' + resultDateText + '</div><div class="result-approval-assets">' + stampHtml + qrHtml + '</div></div>' +
-    '<div style="margin-top:5px; text-align:center; font-size:8px; color:#666;">Grading: A(80-100) B(70-79) C(60-69) D(50-59) F(0-49)</div>' +
+    '<div style="margin-top:5px; text-align:center; font-size:8px; color:#666;">Grading: A(75-100) Excellent · B(65-74) Very Good · C(55-64) Good · D(40-54) Fair · E(0-39) Poor</div>' +
     '</div>';
 }
 
@@ -8005,8 +8011,8 @@ function printMultipleResults(list, label) {
   });
 }
 
-// Subject-teacher score sheet with a shared navigation/validation engine for all keyboard styles.
-function renderSubjectTeacherInput() {
+// Legacy local-storage score sheet; superseded by the Supabase-backed implementation below.
+function renderSubjectTeacherInputLegacy() {
   if (!window.ScoreEntryEngine) { showToast('Score entry engine is unavailable. Reload the page.', 'error'); return; }
   var className = currentUser.arm;
   var subject = currentUser.subject;
@@ -8104,8 +8110,8 @@ function renderSubjectTeacherInput() {
     var populated = ['ca1','ca2','ca3','exam'].map(function(key) { return record[key]; }).filter(function(item) { return item != null && item !== ''; });
     record.total = populated.reduce(function(sum, item) { return sum + Number(item); }, 0);
     var isComplete = populated.length === 4;
-    record.grade = 'F'; record.remark = 'Failed';
-    if (record.total >= 80) { record.grade = 'A'; record.remark = 'Excellent'; } else if (record.total >= 70) { record.grade = 'B'; record.remark = 'Very Good'; } else if (record.total >= 60) { record.grade = 'C'; record.remark = 'Good'; } else if (record.total >= 50) { record.grade = 'D'; record.remark = 'Pass'; }
+    record.grade = 'E'; record.remark = 'Poor';
+    if (record.total >= 75) { record.grade = 'A'; record.remark = 'Excellent'; } else if (record.total >= 65) { record.grade = 'B'; record.remark = 'Very Good'; } else if (record.total >= 55) { record.grade = 'C'; record.remark = 'Good'; } else if (record.total >= 40) { record.grade = 'D'; record.remark = 'Fair'; }
     var totalScore = student.subjects.reduce(function(sum, item) { return sum + (Number(item.total) || 0); }, 0);
     student.totalObtained = totalScore;
     student.totalObtainable = student.subjects.length * 100;
@@ -8256,6 +8262,246 @@ function renderSubjectTeacherInput() {
   setActive(activeRow, activeColumn, false);
   renderPanel();
   showDirectionDialog();
+}
+
+async function renderSubjectTeacherInput() {
+  var root = document.getElementById('inputTab');
+  if (!root) return;
+
+  if (!supabaseClient || !authenticatedProfile || !authenticatedProfile.school_id ||
+      !currentUser || !currentUser.classId || !currentUser.subjectId) {
+    root.innerHTML = '<div class="card"><p class="alert alert-error">Your assigned class or subject could not be verified. Please sign in again or contact the administrator.</p></div>';
+    return;
+  }
+
+  var schoolId = authenticatedProfile.school_id;
+  var teacherId = authenticatedProfile.id;
+  var classId = currentUser.classId;
+  var subjectId = currentUser.subjectId;
+  var sessionId = currentUser.academicSessionId || (activeAcademicSession && activeAcademicSession.id);
+  var className = currentUser.arm;
+  var subjectName = currentUser.subject;
+
+  if (!sessionId) {
+    root.innerHTML = '<div class="card"><p class="alert alert-error">No academic session could be identified for this assignment.</p></div>';
+    return;
+  }
+
+  root.innerHTML = '<div class="card"><h2>' + escapeManagementText(className) + ' — ' + escapeManagementText(subjectName) + '</h2><p>Loading official enrolments and existing results…</p></div>';
+
+  try {
+    var termResult = await supabaseClient.from('terms')
+      .select('id,name,term_number,is_current').eq('school_id', schoolId).order('term_number');
+    if (termResult.error) throw termResult.error;
+    var terms = termResult.data || [];
+    if (!terms.length) throw new Error('No academic terms are configured for this school.');
+
+    var defaultTerm = activeAssessmentTerm && activeAssessmentTerm.term_number ||
+      (terms.find(function(term) { return term.is_current; }) || {}).term_number || 1;
+    var selectedTermNumber = Number(window.__stSelectedTerm || defaultTerm);
+    var selectedTerm = terms.find(function(term) { return Number(term.term_number) === selectedTermNumber; });
+    if (!selectedTerm) throw new Error('The selected academic term could not be found.');
+    window.__stSelectedTerm = String(selectedTerm.term_number);
+
+    var assignmentResult = await supabaseClient.from('teacher_assignments')
+      .select('id,class_id,subject_id,academic_session_id')
+      .eq('school_id', schoolId).eq('teacher_id', teacherId)
+      .eq('class_id', classId).eq('subject_id', subjectId)
+      .eq('academic_session_id', sessionId).maybeSingle();
+    if (assignmentResult.error) throw assignmentResult.error;
+    if (!assignmentResult.data) throw new Error('Your class and subject assignment could not be verified for this session.');
+
+    var enrolmentResult = await supabaseClient.from('student_enrolments')
+      .select('id,student_id,register_number,sid')
+      .eq('school_id', schoolId).eq('class_id', classId)
+      .eq('academic_session_id', sessionId).is('archived_at', null)
+      .order('register_number');
+    if (enrolmentResult.error) throw enrolmentResult.error;
+    var enrolments = enrolmentResult.data || [];
+    if (!enrolments.length) {
+      root.innerHTML = '<div class="card"><h2>' + escapeManagementText(className) + ' — ' + escapeManagementText(subjectName) + '</h2><p class="alert alert-info">No active enrolments were returned for this class and academic session. Check the assignment and database access.</p></div>';
+      return;
+    }
+
+    var studentIds = enrolments.map(function(enrolment) { return enrolment.student_id; }).filter(Boolean);
+    if (!studentIds.length) throw new Error('Active enrolments were found, but none had a linked student ID.');
+    var studentResult = await supabaseClient.from('students')
+      .select('id,admission_number,first_name,middle_name,last_name,status')
+      .eq('school_id', schoolId).in('id', studentIds);
+    if (studentResult.error) throw studentResult.error;
+    var studentsById = {};
+    (studentResult.data || []).forEach(function(student) { studentsById[String(student.id)] = student; });
+    var officialStudents = enrolments.map(function(enrolment) {
+      var student = studentsById[String(enrolment.student_id)];
+      if (!student) return null;
+      var fullName = [student.first_name, student.middle_name, student.last_name].filter(Boolean).join(' ');
+      return {
+        id: student.id,
+        name: fullName || 'Unnamed student',
+        admissionNumber: student.admission_number || '',
+        sid: enrolment.sid || '',
+        registerNumber: enrolment.register_number
+      };
+    }).filter(Boolean);
+    if (!officialStudents.length) throw new Error('Enrolments were returned, but no linked student records were visible. Check student-table access.');
+
+    var resultsResult = await supabaseClient.from('results')
+      .select('id,student_id,ca1,ca2,ca3,examination,total,grade,remark,status')
+      .eq('school_id', schoolId).eq('class_id', classId).eq('subject_id', subjectId)
+      .eq('academic_session_id', sessionId).eq('term_id', selectedTerm.id)
+      .in('student_id', studentIds);
+    if (resultsResult.error) throw resultsResult.error;
+    var resultsByStudent = {};
+    (resultsResult.data || []).forEach(function(result) { resultsByStudent[String(result.student_id)] = result; });
+
+    var classLevel = normalizeAssessmentLevel(assessmentLevelForArm(className));
+    var configResult = await supabaseClient.from('assessment_configurations')
+      .select('ca1_max,ca2_max,ca3_max,examination_max')
+      .eq('school_id', schoolId).eq('academic_session_id', sessionId)
+      .eq('term_id', selectedTerm.id).eq('is_active', true)
+      .eq('class_level', classLevel).maybeSingle();
+    if (configResult.error) throw configResult.error;
+    var config = configResult.data;
+    if (!config) throw new Error('No active assessment configuration was found for ' + classLevel + ', ' + selectedTerm.name + '.');
+
+    var maxima = {
+      ca1: Number(config.ca1_max), ca2: Number(config.ca2_max),
+      ca3: Number(config.ca3_max), examination: Number(config.examination_max)
+    };
+    if (Object.keys(maxima).some(function(field) { return !Number.isFinite(maxima[field]) || maxima[field] < 0; })) {
+      throw new Error('The assessment configuration contains invalid score limits.');
+    }
+
+    var html = '<div class="card"><h2>' + escapeManagementText(className) + ' — ' + escapeManagementText(subjectName) + '</h2>' +
+      '<p><strong>Academic session:</strong> ' + escapeManagementText(activeAcademicSession && activeAcademicSession.name || '') + '</p>' +
+      '<p><strong>Term:</strong> ' + escapeManagementText(selectedTerm.name) + '</p>' +
+      '<p class="alert alert-info"><strong>Score limits:</strong> CA1: 0–' + maxima.ca1 + ', CA2: 0–' + maxima.ca2 + ', CA3: 0–' + maxima.ca3 + ', Examination: 0–' + maxima.examination + '</p>' +
+      '<div class="input-group" style="max-width:260px"><label for="stTermSelect">Select term</label><select id="stTermSelect">';
+    terms.forEach(function(term) {
+      html += '<option value="' + escapeManagementText(term.term_number) + '"' +
+        (Number(term.term_number) === Number(selectedTerm.term_number) ? ' selected' : '') + '>' +
+        escapeManagementText(term.name) + '</option>';
+    });
+    html += '</select></div><div style="overflow-x:auto;margin-top:15px"><table><thead><tr>' +
+      '<th>No.</th><th>Student name</th><th>Admission No.</th><th>CA1</th><th>CA2</th><th>CA3</th>' +
+      '<th>Examination</th><th>Total</th><th>Grade</th><th>Status</th></tr></thead><tbody>';
+
+    officialStudents.forEach(function(student, index) {
+      var existing = resultsByStudent[String(student.id)];
+      var values = ['ca1', 'ca2', 'ca3', 'examination'].map(function(field) {
+        return existing && existing[field] != null ? existing[field] : '';
+      });
+      html += '<tr data-student-id="' + escapeManagementText(student.id) + '">' +
+        '<td>' + escapeManagementText(student.registerNumber || index + 1) + '</td>' +
+        '<td>' + escapeManagementText(student.name) + '</td>' +
+        '<td>' + escapeManagementText(student.admissionNumber) + '</td>' +
+        ['ca1', 'ca2', 'ca3', 'examination'].map(function(field, fieldIndex) {
+          return '<td><input type="number" class="st-score" data-field="' + field + '" min="0" max="' + maxima[field] + '" step="0.01" value="' + escapeManagementText(values[fieldIndex]) + '"></td>';
+        }).join('') +
+        '<td class="st-total">' + escapeManagementText(existing && existing.total != null ? existing.total : '—') + '</td>' +
+        '<td class="st-grade">' + escapeManagementText(existing && existing.grade || '—') + '</td>' +
+        '<td class="st-status">' + escapeManagementText(existing && existing.status || 'new') + '</td></tr>';
+    });
+    html += '</tbody></table></div><p>' + officialStudents.length + ' officially enrolled student(s).</p>' +
+      '<button type="button" class="btn btn-success" id="saveAllScoresBtn">Save scores as draft</button></div>';
+    root.innerHTML = html;
+
+    root.querySelector('#stTermSelect').addEventListener('change', function() {
+      window.__stSelectedTerm = this.value;
+      renderSubjectTeacherInput();
+    });
+
+    function calculateRow(row) {
+      var values = {};
+      ['ca1', 'ca2', 'ca3', 'examination'].forEach(function(field) {
+        values[field] = Number(row.querySelector('[data-field="' + field + '"]').value || 0);
+      });
+      var total = values.ca1 + values.ca2 + values.ca3 + values.examination;
+      var grade = 'F', remark = 'Failed';
+      if (total >= 80) { grade = 'A'; remark = 'Excellent'; }
+      else if (total >= 70) { grade = 'B'; remark = 'Very Good'; }
+      else if (total >= 60) { grade = 'C'; remark = 'Good'; }
+      else if (total >= 50) { grade = 'D'; remark = 'Pass'; }
+      row.querySelector('.st-total').textContent = total;
+      row.querySelector('.st-grade').textContent = grade;
+      return { ca1: values.ca1, ca2: values.ca2, ca3: values.ca3, examination: values.examination, total: total, grade: grade, remark: remark };
+    }
+
+    root.querySelectorAll('.st-score').forEach(function(input) {
+      input.addEventListener('input', function() {
+        var value = Number(this.value);
+        var max = Number(this.max);
+        this.setCustomValidity(this.value !== '' && (!Number.isFinite(value) || value < 0 || value > max) ? 'Enter a score from 0 to ' + max + '.' : '');
+        if (!this.validationMessage) calculateRow(this.closest('tr'));
+      });
+    });
+
+    root.querySelector('#saveAllScoresBtn').addEventListener('click', async function() {
+      var button = this;
+      button.disabled = true;
+      button.textContent = 'Saving…';
+      try {
+        var verifyAssignment = await supabaseClient.from('teacher_assignments').select('id')
+          .eq('school_id', schoolId).eq('teacher_id', teacherId)
+          .eq('class_id', classId).eq('subject_id', subjectId)
+          .eq('academic_session_id', sessionId).maybeSingle();
+        if (verifyAssignment.error) throw verifyAssignment.error;
+        if (!verifyAssignment.data) throw new Error('Your subject assignment is no longer active.');
+
+        var rows = Array.from(root.querySelectorAll('tbody tr[data-student-id]'));
+        var payloads = rows.map(function(row) {
+          var studentId = row.getAttribute('data-student-id');
+          var values = {};
+          ['ca1', 'ca2', 'ca3', 'examination'].forEach(function(field) {
+            var input = row.querySelector('[data-field="' + field + '"]');
+            var number = input.value.trim() === '' ? 0 : Number(input.value);
+            if (!Number.isFinite(number) || number < 0 || number > maxima[field]) {
+              throw new Error('Invalid ' + field.toUpperCase() + ' score for ' + row.cells[1].textContent + '.');
+            }
+            values[field] = number;
+          });
+          var total = values.ca1 + values.ca2 + values.ca3 + values.examination;
+          var grade = 'F', remark = 'Failed';
+          if (total >= 80) { grade = 'A'; remark = 'Excellent'; }
+          else if (total >= 70) { grade = 'B'; remark = 'Very Good'; }
+          else if (total >= 60) { grade = 'C'; remark = 'Good'; }
+          else if (total >= 50) { grade = 'D'; remark = 'Pass'; }
+          var existing = resultsByStudent[String(studentId)];
+          if (existing && ['submitted', 'approved', 'published'].indexOf(String(existing.status || '').toLowerCase()) !== -1) {
+            throw new Error('The result for ' + row.cells[1].textContent + ' is ' + existing.status + '. It must be returned to an editable state through the authorised workflow before changes can be saved.');
+          }
+          return {
+            school_id: schoolId, student_id: studentId, class_id: classId,
+            subject_id: subjectId, academic_session_id: sessionId, term_id: selectedTerm.id,
+            ca1: values.ca1, ca2: values.ca2, ca3: values.ca3, examination: values.examination,
+            total: total, grade: grade, remark: remark, entered_by: teacherId,
+            status: existing && existing.status || 'draft', updated_at: new Date().toISOString()
+          };
+        });
+
+        for (var i = 0; i < payloads.length; i++) {
+          var payload = payloads[i];
+          var saved = await supabaseClient.from('results').upsert(payload, {
+            onConflict: 'student_id,subject_id,academic_session_id,term_id'
+          }).select('id,student_id,status').single();
+          if (saved.error) {
+            var failedStudent = officialStudents.find(function(student) { return String(student.id) === String(payload.student_id); });
+            throw new Error('Could not save the result for ' + (failedStudent && failedStudent.name || payload.student_id) + ': ' + saved.error.message);
+          }
+        }
+        showToast('Scores saved successfully. Existing result statuses were preserved.', 'success');
+        await renderSubjectTeacherInput();
+      } catch (saveError) {
+        console.error('Subject score save failed:', saveError);
+        showToast(saveError.message || 'Unable to save scores.', 'error');
+      } finally {
+        if (button.isConnected) { button.disabled = false; button.textContent = 'Save scores as draft'; }
+      }
+    });
+  } catch (error) {
+    console.error('Subject teacher score sheet failed:', error);
+    root.innerHTML = '<div class="card"><h2>' + escapeManagementText(className) + ' — ' + escapeManagementText(subjectName) + '</h2><p class="alert alert-error">' + escapeManagementText(error.message || 'Unable to load the score sheet.') + '</p></div>';
+  }
 }
 </script>
 <script src="passport-registration.js"></script>
