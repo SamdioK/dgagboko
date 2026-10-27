@@ -184,8 +184,8 @@ th { background: #f5f5f5; font-weight: 600; }
       </div>
 
       <div id="subjectTeacherFields" class="hidden">
-        <div class="input-group"><label>Class &amp; Subject</label><select id="selectedAssignment"><option value="">Select Class &amp; Subject</option></select></div>
-        <div class="input-group"><label>Password</label><input type="password" id="assignmentPassword" placeholder="Enter your password"></div>
+        <div class="input-group"><label for="selectedAssignment">Assigned Class Arm &amp; Subject</label><select id="selectedAssignment"><option value="">Assigned classes load after sign in</option></select><small style="display:block;color:#666;margin-top:6px">After you enter your email and password and tap Login, your assigned class arms and subjects will appear here. Select the assignment you want, then tap Login again.</small></div>
+        <div class="input-group"><label for="assignmentPassword">Password</label><input type="password" id="assignmentPassword" placeholder="Enter your password"></div>
       </div>
       <div id="subadminLoginFields" class="hidden">
         <div class="input-group"><label>Username</label><input type="text" id="subadminUsername" autocomplete="username"></div>
@@ -689,7 +689,7 @@ async function loadAssignmentDropdown() {
 
   if (select) {
     select.innerHTML =
-      '<option value="">Assigned class and subject will load after sign in</option>';
+      '<option value="">Assigned classes load after sign in</option>';
   }
 }
 
@@ -1124,9 +1124,19 @@ async function handleSupabaseLogin(userType, errorDiv) {
           assignmentSelect.appendChild(option);
         });
 
-        throw new Error(
-          'More than one assignment was found. Select your class and subject from the dropdown, then press Login again.'
-        );
+        // End this authentication attempt cleanly so the teacher can
+        // choose an assignment and sign in again with that selection.
+        currentUser = null;
+        authenticatedProfile = null;
+
+        await supabaseClient.auth.signOut();
+
+        errorDiv.textContent =
+          'Your assigned class arms and subjects are now available. ' +
+          'Select the class and subject you want to work on, then tap Login again.';
+        errorDiv.classList.remove('hidden');
+        assignmentSelect.focus();
+        return;
       }
 
       currentUser.arm = chosen.className;
