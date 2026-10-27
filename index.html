@@ -683,23 +683,13 @@ async function resolveSupabaseSubject(subjectName) {
 }
 
 async function loadAssignmentDropdown() {
+  // Do not depend on the legacy cached subjectAssignments list.
+  // The authenticated teacher's assignment will be loaded from Supabase.
   var select = document.getElementById('selectedAssignment');
-  select.innerHTML = '<option value="">Loading...</option>';
-  var assignments = await cloudStorage.load('subjectAssignments');
-  if (!Array.isArray(assignments)) assignments = [];
-  if (removeSubjectAssignmentPasswords(assignments)) await cloudStorage.save('subjectAssignments', assignments);
-  var activated = assignments.filter(function(a) { return a.activated; });
-  if (activated.length === 0) {
-    select.innerHTML = '<option value="">No activated subject slots available</option>';
-  } else {
-    select.innerHTML = '<option value="">Select Class &amp; Subject</option>';
-    activated.forEach(function(a) {
-      var opt = document.createElement('option');
-      opt.value = a.id;
-      var displayClass = a.className.replace(/^JSS1/, 'BASIC7').replace(/^JSS2/, 'BASIC8').replace(/^JSS3/, 'BASIC9').replace(/^BASIC1/, 'BASIC7').replace(/^BASIC2/, 'BASIC8').replace(/^BASIC3/, 'BASIC9');
-      opt.textContent = displayClass + ' - ' + a.subject + ' (' + a.teacherName + ')';
-      select.appendChild(opt);
-    });
+
+  if (select) {
+    select.innerHTML =
+      '<option value="">Assigned class and subject will load after sign in</option>';
   }
 }
 
@@ -1031,36 +1021,121 @@ async function handleSupabaseLogin(userType, errorDiv) {
       }
     }
     if (appType === 'subjectteacher') {
-      var assignmentId = document.getElementById('selectedAssignment').value;
-      var assignment = subjectAssignments.find(function(item) { return String(item.id) === String(assignmentId); });
-      if (!assignment || !assignment.activated) throw new Error('Select an activated assigned class and subject.');
-      var assignmentBelongsToUser = assignment.teacherId
-        ? String(assignment.teacherId) === String(profile.id)
-        : String(assignment.teacherEmail || '').trim().toLowerCase() === String(authResult.data.user.email || '').trim().toLowerCase();
-      if (!assignmentBelongsToUser) {
-        throw new Error('The selected assignment does not belong to the signed-in Subject Teacher account.');
+      if (!activeAcademicSession || !activeAcademicSession.id) {
+        throw new Error(
+          'The active academic session could not be loaded. Contact the school administrator.'
+        );
       }
-      var assignedClass = assignment.classId ? { id: assignment.classId, class_name: assignment.className } : await resolveSupabaseClass(assignment.className);
-      var assignedSubject = assignment.subjectId ? { id: assignment.subjectId } : await resolveSupabaseSubject(assignment.subject);
-      var assignmentResult = await supabaseClient.from('teacher_assignments')
-        .select('id,class_id,subject_id,academic_session_id')
+
+      // Load assignments directly from Supabase for this authenticated teacher.
+      var assignmentResult = await supabaseClient
+        .from('teacher_assignments')
+        .select('id,school_id,teacher_id,class_id,subject_id,academic_session_id')
         .eq('school_id', profile.school_id)
         .eq('teacher_id', profile.id)
-        .eq('class_id', assignedClass.id)
-        .eq('subject_id', assignedSubject.id)
-        .eq('academic_session_id', activeAcademicSession.id)
-        .maybeSingle();
+        .eq('academic_session_id', activeAcademicSession.id);
+
       if (assignmentResult.error) throw assignmentResult.error;
-      if (!assignmentResult.data) throw new Error('This class and subject are not assigned to your Supabase account for the active academic session.');
-      assignment.classId = assignedClass.id;
-      assignment.className = assignedClass.class_name;
-      assignment.subjectId = assignedSubject.id;
-      currentUser.arm = assignedClass.class_name;
-      currentUser.subject = assignment.subject;
-      currentUser.classId = assignedClass.id;
-      currentUser.subjectId = assignedSubject.id;
-      currentUser.assignmentId = assignmentResult.data.id;
-      currentUser.academicSessionId = assignmentResult.data.academic_session_id;
+
+      var teacherAssignmentRows = assignmentResult.data || [];
+
+      if (teacherAssignmentRows.length === 0) {
+        throw new Error(
+          'No subject assignment was found for your account in the active academic session. Ask the school administrator to check your assignment.'
+        );
+      }
+
+      var classIds = teacherAssignmentRows
+        .map(function (row) { return row.class_id; })
+        .filter(Boolean);
+
+      var subjectIds = teacherAssignmentRows
+        .map(function (row) { return row.subject_id; })
+        .filter(Boolean);
+
+      var classResult = await supabaseClient
+        .from('classes')
+        .select('*')
+        .eq('school_id', profile.school_id)
+        .in('id', classIds);
+
+      if (classResult.error) throw classResult.error;
+
+      var subjectResult = await supabaseClient
+        .from('subjects')
+        .select('*')
+        .eq('school_id', profile.school_id)
+        .in('id', subjectIds);
+
+      if (subjectResult.error) throw subjectResult.error;
+
+      var classRows = classResult.data || [];
+      var subjectRows = subjectResult.data || [];
+
+      var validAssignments = teacherAssignmentRows.map(function (row) {
+        var cls = classRows.find(function (item) {
+          return String(item.id) === String(row.class_id);
+        });
+
+        var subj = subjectRows.find(function (item) {
+          return String(item.id) === String(row.subject_id);
+        });
+
+        if (!cls || !subj) return null;
+
+        return {
+          row: row,
+          className: cls.class_name || cls.name || cls.level || 'Assigned class',
+          subjectName:
+            subj.subject_name || subj.name || subj.title || subj.subject ||
+            'Assigned subject'
+        };
+      }).filter(Boolean);
+
+      if (validAssignments.length === 0) {
+        throw new Error(
+          'The assignment exists, but its class or subject could not be loaded. Ask the administrator to check the assignment records.'
+        );
+      }
+
+      var assignmentSelect = document.getElementById('selectedAssignment');
+      var selectedId = assignmentSelect ? assignmentSelect.value : '';
+      var chosen = null;
+
+      if (selectedId) {
+        chosen = validAssignments.find(function (item) {
+          return String(item.row.id) === String(selectedId);
+        }) || null;
+      }
+
+      if (!chosen && validAssignments.length === 1) {
+        chosen = validAssignments[0];
+      }
+
+      if (!chosen) {
+        assignmentSelect.innerHTML =
+          '<option value="">Select your assigned class and subject</option>';
+
+        validAssignments.forEach(function (item) {
+          var option = document.createElement('option');
+          option.value = item.row.id;
+          option.textContent =
+            item.className + ' - ' + item.subjectName;
+          assignmentSelect.appendChild(option);
+        });
+
+        throw new Error(
+          'More than one assignment was found. Select your class and subject from the dropdown, then press Login again.'
+        );
+      }
+
+      currentUser.arm = chosen.className;
+      currentUser.subject = chosen.subjectName;
+      currentUser.classId = chosen.row.class_id;
+      currentUser.subjectId = chosen.row.subject_id;
+      currentUser.assignmentId = chosen.row.id;
+      currentUser.academicSessionId =
+        chosen.row.academic_session_id;
     }
     if (appType === 'student') currentUser.admission = document.getElementById('studentAdmission').value.trim();
     if (appType === 'subadmin') {
