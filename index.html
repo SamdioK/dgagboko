@@ -5365,7 +5365,7 @@ function renderStaffDatabase() {
     var query = document.getElementById('staffDatabaseSearch').value.trim().toLowerCase();
     var matches = staffDatabase.filter(function(record) { return fields.some(function(field) { return String(record[field[0]] || '').toLowerCase().indexOf(query) !== -1; }) || String(record.staffId || '').toLowerCase().indexOf(query) !== -1; });
     document.getElementById('staffDatabaseRows').innerHTML = matches.length ? '<div style="overflow-x:auto"><table><thead><tr><th>Photo</th><th>Staff ID</th><th>Name</th><th>Gender</th><th>Employment Type</th><th>Designation / Department</th><th>Specialisation</th><th>Status</th><th>Portal</th><th>Actions</th></tr></thead><tbody>' + matches.map(function(record) { return '<tr><td>' + (record.photo ? '<img src="' + escapeManagementText(record.photo) + '" alt="" style="width:48px;height:54px;object-fit:cover;border-radius:4px">' : '—') + '</td><td>' + escapeManagementText(record.staffId) + '</td><td>' + escapeManagementText(record.fullName) + '</td><td>' + escapeManagementText(record.gender) + '</td><td>' + escapeManagementText(record.employmentType) + '</td><td>' + escapeManagementText(record.designation) + ' / ' + escapeManagementText(record.department) + '</td><td>' + escapeManagementText(record.specialisation) + '</td><td>' + escapeManagementText(record.status) + '</td><td>' + (record.showOnPortal ? 'Yes' : 'No') + '</td><td style="white-space:nowrap"><button class="btn btn-primary staff-edit" data-id="' + escapeManagementText(record.id) + '">Edit</button> <button class="btn ' + (record.status === 'Active' ? 'btn-danger' : 'btn-success') + ' staff-toggle" data-id="' + escapeManagementText(record.id) + '">' + (record.status === 'Active' ? 'Deactivate' : 'Activate') + '</button></td></tr>'; }).join('') + '</tbody></table></div>' : '<p style="color:#999">No matching staff records.</p>';
-    document.querySelectorAll('.staff-edit').forEach(function(button) { button.addEventListener('click', function() { var record = staffDatabase.find(function(item) { return String(item.id) === button.dataset.id; }); if (!record) return; editingId = String(record.id); editingQualificationLegacy = loadQualifications(record); inputIds.forEach(function(id) { document.getElementById(id).value = record[id] || ''; }); document.getElementById('staffPhoto').value = ''; document.getElementById('staffStatus').value = record.status || 'Active'; document.getElementById('staffShowOnPortal').checked = record.showOnPortal === true; document.getElementById('saveStaffRecordBtn').textContent = 'Save Staff Changes'; document.getElementById('staffDatabaseTab').scrollIntoView({ behavior: 'smooth' }); }); });
+    document.querySelectorAll('.staff-edit').forEach(function(button) { button.addEventListener('click', function() { var record = staffDatabase.find(function(item) { return String(item.id) === button.dataset.id; }); if (!record) return; editingId = String(record.id); inputIds.forEach(function(id) { document.getElementById(id).value = record[id] || ''; }); editingQualificationLegacy = loadQualifications(record); document.getElementById('staffPhoto').value = ''; document.getElementById('staffStatus').value = record.status || 'Active'; document.getElementById('staffShowOnPortal').checked = record.showOnPortal === true; document.getElementById('saveStaffRecordBtn').textContent = 'Save Staff Changes'; document.getElementById('staffDatabaseTab').scrollIntoView({ behavior: 'smooth' }); }); });
     document.querySelectorAll('.staff-toggle').forEach(function(button) { button.addEventListener('click', async function() { var record = staffDatabase.find(function(item) { return String(item.id) === button.dataset.id; }); if (!record) return; record.status = record.status === 'Active' ? 'Inactive' : 'Active'; await saveAllData(); renderRows(); }); });
   }
   document.getElementById('staffDatabaseSearch').addEventListener('input', renderRows);
@@ -5389,8 +5389,20 @@ function renderStaffDatabase() {
     var saveRecord = async function(photo) {
       var record = staffDatabase.find(function(item) { return String(item.id) === editingId; }) || { id: 'staff-manual-' + Date.now(), sourceKey: 'manual-' + Date.now() };
       inputIds.forEach(function(id) { record[id] = document.getElementById(id).value.trim(); });
-      record.qualificationLegacy = editingQualificationLegacy || record.qualificationLegacy || '';
       record.qualification = getSelectedQualifications();
+      var legacyNotice = document.getElementById('qualificationLegacyNotice');
+      var legacyText = '';
+      if (legacyNotice && legacyNotice.style.display !== 'none') {
+        var prefix = 'Previously recorded qualification preserved: ';
+        legacyText = legacyNotice.textContent.indexOf(prefix) === 0
+          ? legacyNotice.textContent.substring(prefix.length).trim()
+          : '';
+      }
+      if (legacyText) {
+        record.qualificationLegacy = legacyText;
+      } else {
+        delete record.qualificationLegacy;
+      }
       record.status = document.getElementById('staffStatus').value; record.showOnPortal = document.getElementById('staffShowOnPortal').checked;
       if (photo) record.photo = photo;
       if (!staffDatabase.some(function(item) { return String(item.id) === String(record.id); })) staffDatabase.push(record);
@@ -5529,7 +5541,16 @@ async function showPublicPortal() {
     var record = staffDatabase.find(function(item) { return String(item.id) === String(selection.staffId); });
     if (!record || record.status !== 'Active' || record.showOnPortal !== true) return null;
     var selectedFields = Array.isArray(selection.fields) ? selection.fields : getDefaultPortalStaffFields();
-    var details = selectedFields.filter(function(field) { return field !== 'photo' && field !== 'fullName' && portalFieldLabels[field] && record[field]; }).map(function(field) { return '<p><strong>' + portalFieldLabels[field] + ':</strong> ' + escapeManagementText(record[field]) + '</p>'; }).join('');
+    var details = selectedFields.filter(function(field) { return field !== 'photo' && field !== 'fullName' && field !== 'qualification' && portalFieldLabels[field] && record[field]; }).map(function(field) { return '<p><strong>' + portalFieldLabels[field] + ':</strong> ' + escapeManagementText(record[field]) + '</p>'; }).join('');
+    if (selectedFields.indexOf('qualification') !== -1) {
+      var qualificationValues = Array.isArray(record.qualification)
+        ? record.qualification.slice()
+        : (record.qualification ? [record.qualification] : []);
+      if (record.qualificationLegacy) qualificationValues.push(record.qualificationLegacy);
+      if (qualificationValues.length) {
+        details += '<p><strong>Qualification:</strong> ' + escapeManagementText(qualificationValues.join('; ')) + '</p>';
+      }
+    }
     return '<article class="management-profile" style="margin:8px 0">' + (selectedFields.indexOf('photo') !== -1 && record.photo ? '<img src="' + escapeManagementText(record.photo) + '" alt="' + escapeManagementText(record.fullName) + '" class="portal-photo" style="cursor:zoom-in">' : '') + '<div>' + (selectedFields.indexOf('fullName') !== -1 ? '<h4>' + escapeManagementText(record.fullName) + '</h4>' : '') + details + '</div></article>';
   }).filter(Boolean);
   sections += '<section class="card"><h3>Staff List</h3>' + (portalStaff.length ? '<div class="grid grid-3">' + portalStaff.join('') + '</div>' : '<p style="color:#999">No staff profiles are currently published.</p>') + '</section>';
