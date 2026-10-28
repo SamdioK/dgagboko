@@ -5211,6 +5211,60 @@ function syncStaffDatabaseFromExistingRecords() {
   return changed;
 }
 
+async function loadStaffDirectoryFromSupabase() {
+  if (
+    !supabaseClient ||
+    !authenticatedProfile ||
+    !authenticatedProfile.school_id
+  ) {
+    throw new Error(
+      'An authenticated school administrator is required to load staff records.'
+    );
+  }
+
+  var schoolId = authenticatedProfile.school_id;
+
+  var result = await supabaseClient
+    .from('school_staff_directory')
+    .select('*')
+    .eq('school_id', schoolId)
+    .order('full_name', { ascending: true });
+
+  if (result.error) {
+    throw new Error(
+      'Could not load the Supabase Staff Database: ' + result.error.message
+    );
+  }
+
+  staffDatabase = (result.data || []).map(function (row) {
+    return {
+      id: row.id,
+      supabaseId: row.id,
+      profileId: row.profile_id || '',
+      sourceKey: row.profile_id
+        ? 'profile-' + row.profile_id
+        : 'supabase-' + row.id,
+      staffId: row.staff_id || '',
+      fullName: row.full_name || '',
+      gender: row.gender || '',
+      designation: row.designation || '',
+      department: row.department || '',
+      qualification: row.qualification || '',
+      specialisation: row.specialisation || '',
+      employmentType: row.employment_type || '',
+      phone: row.phone || '',
+      email: row.email || '',
+      dateEmployed: row.date_employed || '',
+      biography: row.biography || '',
+      photo: row.photo_url || '',
+      status: row.status || 'Active',
+      showOnPortal: row.show_on_portal === true
+    };
+  });
+
+  return staffDatabase;
+}
+
 function renderStaffDatabase() {
   if (!currentUser || currentUser.type !== 'admin') return;
   if (syncStaffDatabaseFromExistingRecords()) saveAllData();
@@ -6519,112 +6573,12 @@ window.clearAllMasters = async function() {
 };
 
 window.toggleAssignmentActivation = async function(id) {
-  if (
-    currentUser.type !== 'admin' &&
-    !hasSubAdminPermission('manageTeachers')
-  ) {
-    showToast('You do not have permission to manage teachers', 'error');
-    return;
-  }
-
-  var assignment = subjectAssignments.find(function(item) {
-    return String(item.id) === String(id);
-  });
-
-  if (!assignment) {
-    showToast('Subject Teacher assignment was not found.', 'error');
-    return;
-  }
-
-  if (
-    !supabaseClient ||
-    !authenticatedProfile ||
-    !authenticatedProfile.school_id ||
-    !activeAcademicSession ||
-    !activeAcademicSession.id
-  ) {
-    showToast('The school or active academic session could not be verified.', 'error');
-    return;
-  }
-
-  if (!assignment.classId || !assignment.subjectId || !assignment.teacherEmail) {
-    showToast(
-      'This assignment is missing its class, subject, or teacher email. Check the assignment details.',
-      'error'
-    );
-    return;
-  }
-
-  var previousStatus = assignment.activated === true;
-  var nextStatus = !previousStatus;
-
-  try {
-    // Resolve the teacher's actual Supabase profile.
-    var profileResult = await supabaseClient
-      .from('profiles')
-      .select('id,email,school_id,is_active')
-      .eq('school_id', authenticatedProfile.school_id)
-      .ilike('email', assignment.teacherEmail.trim())
-      .maybeSingle();
-
-    if (profileResult.error) throw profileResult.error;
-
-    var teacherProfile = profileResult.data;
-
-    if (!teacherProfile || teacherProfile.is_active !== true) {
-      throw new Error(
-        'The assigned teacher has no matching active Supabase profile. Check the teacher account before activating this assignment.'
-      );
-    }
-
-    // Update the matching database assignment for this academic session.
-    var updateResult = await supabaseClient
-      .from('teacher_assignments')
-      .update({ is_active: nextStatus })
-      .eq('school_id', authenticatedProfile.school_id)
-      .eq('teacher_id', teacherProfile.id)
-      .eq('class_id', assignment.classId)
-      .eq('subject_id', assignment.subjectId)
-      .eq('academic_session_id', activeAcademicSession.id)
-      .select('id,is_active');
-
-    if (updateResult.error) throw updateResult.error;
-
-    if (!updateResult.data || updateResult.data.length === 0) {
-      throw new Error(
-        'No matching Supabase assignment was updated. Check that the teacher, class, subject, and active session match.'
-      );
-    }
-
-    assignment.teacherId = teacherProfile.id;
-    assignment.activated = nextStatus;
-
-    var saved = await saveAllData();
-
-    if (!saved) {
-      throw new Error(
-        'Supabase was updated, but the Masters list could not be saved. Reload the Admin dashboard and check the assignment status.'
-      );
-    }
-
-    showToast(
-      assignment.className + ' - ' + assignment.subject +
-      (nextStatus ? ' activated' : ' deactivated'),
-      nextStatus ? 'success' : 'info'
-    );
-
-    renderMasters();
-  } catch (error) {
-    // Do not display a successful change when the database update failed.
-    assignment.activated = previousStatus;
-
-    showToast(
-      error && error.message
-        ? error.message
-        : 'Could not update the assignment activation status.',
-      'error'
-    );
-
+  if (currentUser.type !== 'admin' && !hasSubAdminPermission('manageTeachers')) { showToast('You do not have permission to manage teachers', 'error'); return; }
+  var a = subjectAssignments.find(function(x) { return x.id === id; });
+  if (a) {
+    a.activated = !a.activated;
+    await saveAllData();
+    showToast((a.className + ' - ' + a.subject) + ' ' + (a.activated ? 'activated' : 'deactivated'), a.activated ? 'success' : 'info');
     renderMasters();
   }
 };
