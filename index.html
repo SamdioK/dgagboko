@@ -5265,7 +5265,7 @@ async function loadStaffDirectoryFromSupabase() {
   return staffDatabase;
 }
 
-function renderStaffDatabase() {
+function renderStaffDatabaseLegacy() {
   if (!currentUser || currentUser.type !== 'admin') return;
   if (syncStaffDatabaseFromExistingRecords()) saveAllData();
   var editingId = '';
@@ -5302,6 +5302,391 @@ function renderStaffDatabase() {
     if (file) { var reader = new FileReader(); reader.onload = function(event) { saveRecord(event.target.result); }; reader.onerror = function() { showToast('Could not read staff photo', 'error'); }; reader.readAsDataURL(file); } else saveRecord(null);
   });
   renderRows();
+}
+
+async function renderStaffDatabase() {
+  if (!currentUser || currentUser.type !== 'admin') return;
+
+  if (
+    !supabaseClient ||
+    !authenticatedProfile ||
+    !authenticatedProfile.school_id ||
+    authenticatedProfile.role !== 'administrator' ||
+    authenticatedProfile.is_active !== true
+  ) {
+    var unavailable = document.getElementById('staffDatabaseTab');
+    if (unavailable) {
+      unavailable.innerHTML =
+        '<div class="card"><p class="alert alert-error">' +
+        'An active, authenticated school administrator is required to manage staff records.' +
+        '</p></div>';
+    }
+    return;
+  }
+
+  var tab = document.getElementById('staffDatabaseTab');
+  if (!tab) return;
+
+  tab.innerHTML =
+    '<div class="card"><h2>Staff Database</h2>' +
+    '<p class="alert alert-info">Loading staff records from Supabase…</p></div>';
+
+  var fields = [
+    ['staffId', 'Staff ID'],
+    ['fullName', 'Full Name'],
+    ['gender', 'Gender'],
+    ['designation', 'Designation / Position'],
+    ['department', 'Department'],
+    ['qualification', 'Qualification'],
+    ['specialisation', 'Specialisation / Subject'],
+    ['employmentType', 'Employment Type'],
+    ['phone', 'Phone'],
+    ['email', 'Email'],
+    ['dateEmployed', 'Date Employed'],
+    ['biography', 'Short Biography']
+  ];
+
+  var schoolId = authenticatedProfile.school_id;
+  var editingId = '';
+  var inputIds = fields.map(function (field) {
+    return field[0];
+  });
+
+  function setStatus(message, type) {
+    var el = document.getElementById('staffDatabaseMessage');
+    if (el) {
+      el.className = 'alert alert-' + (type || 'info');
+      el.textContent = message;
+      el.style.display = 'block';
+    } else {
+      showToast(message, type === 'error' ? 'error' : 'info');
+    }
+  }
+
+  function clearForm() {
+    editingId = '';
+
+    inputIds.forEach(function (id) {
+      var input = document.getElementById(id);
+      if (input) input.value = '';
+    });
+
+    document.getElementById('staffPhoto').value = '';
+    document.getElementById('staffStatus').value = 'Active';
+    document.getElementById('staffShowOnPortal').checked = false;
+    document.getElementById('saveStaffRecordBtn').textContent =
+      'Add Staff Record';
+  }
+
+  function renderRows() {
+    var rows = document.getElementById('staffDatabaseRows');
+    if (!rows) return;
+
+    var search = document.getElementById('staffDatabaseSearch')
+      .value.trim().toLowerCase();
+
+    var matches = staffDatabase.filter(function (record) {
+      return fields.some(function (field) {
+        return String(record[field[0]] || '')
+          .toLowerCase().indexOf(search) !== -1;
+      });
+    });
+
+    rows.innerHTML = matches.length
+      ? '<div style="overflow-x:auto"><table><thead><tr>' +
+        '<th>Photo</th><th>Staff ID</th><th>Name</th>' +
+        '<th>Designation / Department</th><th>Specialisation</th>' +
+        '<th>Status</th><th>Portal</th><th>Actions</th>' +
+        '</tr></thead><tbody>' +
+        matches.map(function (record) {
+          return '<tr>' +
+            '<td>' +
+            (record.photo
+              ? '<img src="' + escapeManagementText(record.photo) +
+                '" alt="" style="width:48px;height:54px;object-fit:cover;border-radius:4px">'
+              : '—') +
+            '</td>' +
+            '<td>' + escapeManagementText(record.staffId || '') + '</td>' +
+            '<td>' + escapeManagementText(record.fullName || '') + '</td>' +
+            '<td>' + escapeManagementText(record.designation || '') +
+            ' / ' + escapeManagementText(record.department || '') + '</td>' +
+            '<td>' + escapeManagementText(record.specialisation || '') + '</td>' +
+            '<td>' + escapeManagementText(record.status || '') + '</td>' +
+            '<td>' + (record.showOnPortal ? 'Yes' : 'No') + '</td>' +
+            '<td style="white-space:nowrap">' +
+            '<button type="button" class="btn btn-primary staff-edit" data-id="' +
+            escapeManagementText(record.id) + '">Edit</button> ' +
+            '<button type="button" class="btn ' +
+            (record.status === 'Active' ? 'btn-danger' : 'btn-success') +
+            ' staff-toggle" data-id="' + escapeManagementText(record.id) +
+            '">' + (record.status === 'Active' ? 'Deactivate' : 'Activate') +
+            '</button></td></tr>';
+        }).join('') +
+        '</tbody></table></div>'
+      : '<p style="color:#999">No matching staff records.</p>';
+
+    rows.querySelectorAll('.staff-edit').forEach(function (button) {
+      button.addEventListener('click', function () {
+        var record = staffDatabase.find(function (item) {
+          return String(item.id) === button.dataset.id;
+        });
+        if (!record) return;
+
+        editingId = String(record.id);
+
+        inputIds.forEach(function (id) {
+          document.getElementById(id).value = record[id] || '';
+        });
+
+        document.getElementById('staffPhoto').value = '';
+        document.getElementById('staffStatus').value =
+          record.status || 'Active';
+        document.getElementById('staffShowOnPortal').checked =
+          record.showOnPortal === true;
+        document.getElementById('saveStaffRecordBtn').textContent =
+          'Save Staff Changes';
+
+        tab.scrollIntoView({ behavior: 'smooth' });
+      });
+    });
+
+    rows.querySelectorAll('.staff-toggle').forEach(function (button) {
+      button.addEventListener('click', async function () {
+        var record = staffDatabase.find(function (item) {
+          return String(item.id) === button.dataset.id;
+        });
+        if (!record || button.disabled) return;
+
+        var nextStatus =
+          record.status === 'Active' ? 'Inactive' : 'Active';
+
+        button.disabled = true;
+
+        try {
+          var result = await supabaseClient
+            .from('school_staff_directory')
+            .update({
+              status: nextStatus,
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', record.id)
+            .eq('school_id', schoolId)
+            .select('*')
+            .maybeSingle();
+
+          if (result.error) throw result.error;
+          if (!result.data) {
+            throw new Error(
+              'Supabase did not confirm the staff status update.'
+            );
+          }
+
+          showToast('Staff status updated successfully.', 'success');
+          await renderStaffDatabase();
+        } catch (error) {
+          console.error('Staff status update failed:', error);
+          showToast(
+            'Could not update staff status: ' +
+              (error.message || 'Unknown error'),
+            'error'
+          );
+          button.disabled = false;
+        }
+      });
+    });
+  }
+
+  try {
+    await loadStaffDirectoryFromSupabase();
+
+    tab.innerHTML =
+      '<div class="card"><h2>Staff Database</h2>' +
+      '<p style="color:#666;margin:8px 0 16px">' +
+      'Staff records are stored in Supabase. A directory entry does not ' +
+      'automatically create a login account or grant teaching permissions.' +
+      '</p>' +
+      '<div id="staffDatabaseMessage" class="alert" style="display:none"></div>' +
+      '<div class="grid grid-2">' +
+      fields.map(function (field) {
+        var type = field[0] === 'dateEmployed'
+          ? 'date'
+          : field[0] === 'email' ? 'email' : 'text';
+
+        return '<div class="input-group"><label for="' +
+          field[0] + '">' + field[1] +
+          (field[0] === 'fullName' ? ' *' : '') +
+          '</label><input id="' + field[0] +
+          '" type="' + type + '"></div>';
+      }).join('') +
+      '<div class="input-group"><label>Photo</label>' +
+      '<input id="staffPhoto" type="file" accept="image/*"></div>' +
+      '<div class="input-group"><label>Account Status</label>' +
+      '<select id="staffStatus"><option>Active</option>' +
+      '<option>Inactive</option><option>Suspended</option></select></div>' +
+      '<div class="input-group"><label><input id="staffShowOnPortal" type="checkbox"> ' +
+      'Show on School Portal</label></div></div>' +
+      '<button type="button" class="btn btn-success" id="saveStaffRecordBtn">' +
+      'Add Staff Record</button> ' +
+      '<button type="button" class="btn" id="clearStaffRecordBtn" style="background:#eee">' +
+      'Clear / Cancel</button></div>' +
+      '<div class="card"><div class="input-group">' +
+      '<label for="staffDatabaseSearch">🔍 Search staff database</label>' +
+      '<input id="staffDatabaseSearch" type="search" ' +
+      'placeholder="Search by name, ID, department, designation, subject, phone or email">' +
+      '</div><div id="staffDatabaseRows"></div></div>';
+
+    document.getElementById('staffDatabaseSearch')
+      .addEventListener('input', renderRows);
+
+    document.getElementById('clearStaffRecordBtn')
+      .addEventListener('click', clearForm);
+
+    document.getElementById('saveStaffRecordBtn')
+      .addEventListener('click', async function () {
+        var saveButton = this;
+        if (saveButton.disabled) return;
+
+        var fullName = document.getElementById('fullName').value.trim();
+        if (!fullName) {
+          showToast('Full Name is required.', 'error');
+          return;
+        }
+
+        var email = document.getElementById('email').value.trim();
+        var file = document.getElementById('staffPhoto').files[0];
+
+        if (file && (!file.type || file.type.indexOf('image/') !== 0)) {
+          showToast('Choose a valid staff photo.', 'error');
+          return;
+        }
+
+        saveButton.disabled = true;
+
+        try {
+          var existing = editingId
+            ? staffDatabase.find(function (item) {
+                return String(item.id) === editingId;
+              })
+            : null;
+
+          var photo = existing ? (existing.photo || '') : '';
+
+          if (file) {
+            photo = await new Promise(function (resolve, reject) {
+              var reader = new FileReader();
+              reader.onload = function (event) {
+                resolve(event.target.result);
+              };
+              reader.onerror = function () {
+                reject(new Error('Could not read the selected staff photo.'));
+              };
+              reader.readAsDataURL(file);
+            });
+          }
+
+          var profileId = existing && existing.profileId
+            ? existing.profileId
+            : null;
+
+          // Link an existing profile only when its email matches within
+          // this school. This does not create an account or grant a role.
+          if (!profileId && email) {
+            var profileResult = await supabaseClient
+              .from('profiles')
+              .select('id')
+              .eq('school_id', schoolId)
+              .ilike('email', email)
+              .limit(2);
+
+            if (profileResult.error) throw profileResult.error;
+
+            var profiles = profileResult.data || [];
+            if (profiles.length > 1) {
+              throw new Error(
+                'More than one profile matches this email in the school. ' +
+                'Resolve the duplicate profiles before linking this staff record.'
+              );
+            }
+            if (profiles.length === 1) {
+              profileId = profiles[0].id;
+            }
+          }
+
+          var payload = {
+            school_id: schoolId,
+            profile_id: profileId,
+            staff_id: document.getElementById('staffId').value.trim() || null,
+            full_name: fullName,
+            gender: document.getElementById('gender').value.trim() || null,
+            designation: document.getElementById('designation').value.trim() || null,
+            department: document.getElementById('department').value.trim() || null,
+            qualification: document.getElementById('qualification').value.trim() || null,
+            specialisation: document.getElementById('specialisation').value.trim() || null,
+            employment_type: document.getElementById('employmentType').value.trim() || null,
+            phone: document.getElementById('phone').value.trim() || null,
+            email: email || null,
+            date_employed: document.getElementById('dateEmployed').value || null,
+            biography: document.getElementById('biography').value.trim() || null,
+            photo_url: photo || null,
+            status: document.getElementById('staffStatus').value,
+            show_on_portal: document.getElementById('staffShowOnPortal').checked,
+            updated_at: new Date().toISOString()
+          };
+
+          var result;
+
+          if (editingId) {
+            result = await supabaseClient
+              .from('school_staff_directory')
+              .update(payload)
+              .eq('id', editingId)
+              .eq('school_id', schoolId)
+              .select('*')
+              .maybeSingle();
+          } else {
+            payload.created_by = authenticatedProfile.id;
+
+            result = await supabaseClient
+              .from('school_staff_directory')
+              .insert(payload)
+              .select('*')
+              .single();
+          }
+
+          if (result.error) throw result.error;
+          if (!result.data) {
+            throw new Error('Supabase did not confirm the staff record save.');
+          }
+
+          showToast('Staff record saved successfully.', 'success');
+          logActivity(
+            editingId ? 'Updated staff directory record' : 'Added staff directory record',
+            fullName
+          );
+
+          await renderStaffDatabase();
+        } catch (error) {
+          console.error('Staff record save failed:', error);
+          showToast(
+            'Could not save staff record: ' +
+              (error.message || 'Unknown error'),
+            'error'
+          );
+          saveButton.disabled = false;
+        }
+      });
+
+    renderRows();
+  } catch (error) {
+    console.error('Staff directory load failed:', error);
+    tab.innerHTML =
+      '<div class="card"><h2>Staff Database</h2>' +
+      '<p class="alert alert-error">' +
+      'Could not load staff records from Supabase: ' +
+      escapeManagementText(error.message || 'Unknown error') +
+      '</p><button type="button" class="btn btn-primary" ' +
+      'onclick="renderStaffDatabase()">Retry</button></div>';
+  }
 }
 
 // ===================== PUBLIC PORTAL + PORTAL CONTENT =====================
