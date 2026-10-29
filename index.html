@@ -2548,44 +2548,228 @@ function renderIdCardPreview(data, targetId) {
     '</div>';
 }
 
-function previewBulkIdCards() {
-  if (!(idCardIsDeveloper() ||
-      (currentUser && currentUser.type === 'admin'))) {
+async function previewBulkIdCards() {
+  if (
+    !currentUser ||
+    !(idCardIsDeveloper() || currentUser.type === 'admin')
+  ) {
     showToast('Bulk preview is not authorised.', 'error');
     return;
   }
 
-  var ids = document.getElementById('idCardBulkIds').value
-    .split(/[\n,;]+/)
-    .map(function (value) { return value.trim().toLowerCase(); })
-    .filter(Boolean);
-
-  if (!ids.length) {
-    showToast('Enter student admission numbers.', 'error');
+  if (!supabaseClient || !authenticatedProfile ||
+      !authenticatedProfile.school_id) {
+    showToast('The authenticated school could not be verified.', 'error');
     return;
   }
 
+  var input = document.getElementById('idCardBulkIds');
   var results = document.getElementById('idCardBulkResults');
-  results.innerHTML = '';
+  if (!input || !results) return;
 
-  ids.forEach(function (id, index) {
-    var record = students.find(function (s) {
-      return String(s.admNo || s.admissionNumber || '')
-        .trim().toLowerCase() === id;
+  var ids = input.value
+    .split(/[\n,;]+/)
+    .map(function (value) {
+      return value.trim();
+    })
+    .filter(Boolean);
+
+  if (!ids.length) {
+    showToast('Enter student IDs or admission numbers.', 'error');
+    return;
+  }
+
+  results.innerHTML =
+    '<p class="alert alert-info">Searching official student records…</p>';
+
+  try {
+    var schoolId = authenticatedProfile.school_id;
+    var wanted = ids.map(function (value) {
+      return value.toLowerCase();
     });
 
-    if (!record) return;
+    // First search the official enrolment table by generated SID.
+    var enrolmentResult = await supabaseClient
+      .from('student_enrolments')
+      .select(
+        'id,student_id,sid,register_number,class_id,academic_session_id,archived_at'
+      )
+      .eq('school_id', schoolId)
+      .in('sid', ids);
 
-    var data = idCardBuildData(record, 'student');
-    var wrapper = document.createElement('div');
-    wrapper.innerHTML = '<div id="idCardBulkItem' + index + '"></div>';
-    results.appendChild(wrapper);
-    renderIdCardPreview(data, 'idCardBulkItem' + index);
-  });
+    if (enrolmentResult.error) throw enrolmentResult.error;
 
-  if (!results.children.length) {
+    var enrolments = enrolmentResult.data || [];
+    var studentIds = enrolments
+      .map(function (row) { return row.student_id; })
+      .filter(Boolean);
+
+    // Also accept official admission numbers.
+    var studentResult = await supabaseClient
+      .from('students')
+      .select(
+        'id,school_id,admission_number,first_name,middle_name,last_name,full_name,gender,date_of_birth,guardian_phone'
+      )
+      .eq('school_id', schoolId)
+      .in('admission_number', ids);
+
+    if (studentResult.error) throw studentResult.error;
+
+    var officialStudents = studentResult.data || [];
+
+    // Add student IDs found by admission number.
+    studentResult.data.forEach(function (student) {
+      if (student.id) studentIds.push(student.id);
+    });
+
+    studentIds = studentIds.filter(function (id, index, all) {
+      return all.indexOf(id) === index;
+    });
+
+    // Retrieve enrolments for admission-number matches as well.
+    if (studentIds.length) {
+      var linkedResult = await supabaseClient
+        .from('student_enrolments')
+        .select(
+          'id,student_id,sid,register_number,class_id,academic_session_id,archived_at'
+        )
+        .eq('school_id', schoolId)
+        .in('student_id', studentIds);
+
+      if (linkedResult.error) throw linkedResult.error;
+
+      (linkedResult.data || []).forEach(function (row) {
+        if (!enrolments.some(function (existing) {
+          return existing.id === row.id;
+        })) {
+          enrolments.push(row);
+        }
+      });
+    }
+
+    var officialById = {};
+    officialStudents.forEach(function (student) {
+      officialById[String(student.id)] = student;
+    });
+
+    // Load any students referenced by SID matches.
+    var missingIds = studentIds.filter(function (id) {
+      return !officialById[String(id)];
+    });
+
+    if (missingIds.length) {
+      var missingResult = await supabaseClient
+        .from('students')
+        .select(
+          'id,school_id,admission_number,first_name,middle_name,last_name,full_name,gender,date_of_birth,guardian_phone'
+        )
+        .eq('school_id', schoolId)
+        .in('id', missingIds);
+
+      if (missingResult.error) throw missingResult.error;
+
+      (missingResult.data || []).forEach(function (student) {
+        officialById[String(student.id)] = student;
+      });
+    }
+
+    var matched = [];
+    wanted.forEach(function (key) {
+      var matchingEnrolment = enrolments.find(function (row) {
+        return String(row.sid || '').trim().toLowerCase() === key;
+      });
+
+      var matchingStudent = officialStudents.find(function (student) {
+        return String(student.admission_number || '')
+          .trim().toLowerCase() === key;
+      });
+
+      if (matchingEnrolment) {
+        var student = officialById[String(matchingEnrolment.student_id)];
+
+        if (student) {
+          matched.push({
+            student: student,
+            enrolment: matchingEnrolment
+          });
+          return;
+        }
+      }
+
+      if (matchingStudent) {
+        var linkedEnrolment = enrolments.find(function (row) {
+          return String(row.student_id) === String(matchingStudent.id);
+        });
+
+        matched.push({
+          student: matchingStudent,
+          enrolment: linkedEnrolment || null
+        });
+      }
+    });
+
+    results.innerHTML = '';
+
+    if (!matched.length) {
+      results.innerHTML =
+        '<div class="alert alert-error">' +
+        'No official student records matched these SIDs or admission numbers. ' +
+        'Check the school association and the SID values in student_enrolments.' +
+        '</div>';
+      return;
+    }
+
+    matched.forEach(function (item, index) {
+      var student = item.student;
+      var enrolment = item.enrolment || {};
+
+      var record = Object.assign({}, student, {
+        studentName:
+          student.full_name ||
+          [
+            student.first_name,
+            student.middle_name,
+            student.last_name
+          ].filter(Boolean).join(' '),
+        fullName:
+          student.full_name ||
+          [
+            student.first_name,
+            student.middle_name,
+            student.last_name
+          ].filter(Boolean).join(' '),
+        admNo: enrolment.sid || student.admission_number || '',
+        admissionNumber: student.admission_number || '',
+        className: enrolment.class_id || '',
+        photoUrl: student.photo_url || student.passport_url || ''
+      });
+
+      var wrapper = document.createElement('div');
+      var targetId = 'idCardBulkItem' + index;
+      wrapper.innerHTML = '<div id="' + targetId + '"></div>';
+      results.appendChild(wrapper);
+
+      renderIdCardPreview(
+        idCardBuildData(record, 'student'),
+        targetId
+      );
+    });
+
+    if (matched.length < ids.length) {
+      var note = document.createElement('p');
+      note.className = 'alert alert-info';
+      note.textContent =
+        'Found ' + matched.length + ' matching record(s) out of ' +
+        ids.length + ' requested. Some entries were not found.';
+      results.prepend(note);
+    }
+  } catch (error) {
+    console.error('Official student ID card lookup failed:', error);
     results.innerHTML =
-      '<div class="alert alert-error">No matching student records found.</div>';
+      '<div class="alert alert-error">' +
+      'Could not search the official student database: ' +
+      idCardEscape(error.message || 'Unknown database error') +
+      '</div>';
   }
 }
 
