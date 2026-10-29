@@ -2535,7 +2535,10 @@ function renderIdCardPreview(data, targetId) {
           '<strong style="display:block;font-size:14px;color:#176b43;">' +
             idCardEscape(data.name) + '</strong>' +
           '<div>Type: ' + idCardEscape(data.kind) + '</div>' +
-          '<div>ID: ' + idCardEscape(data.identifier) + '</div>' +
+          '<div>' +
+            (data.kind === 'Student' ? 'Admission No: ' : 'Staff ID: ') +
+            idCardEscape(data.identifier) +
+          '</div>' +
           '<div>' + idCardEscape(data.className) + '</div>' +
           '<div>Valid until: ' + idCardEscape(validUntil) + '</div>' +
         '</div>' +
@@ -2738,7 +2741,7 @@ async function previewBulkIdCards() {
             student.middle_name,
             student.last_name
           ].filter(Boolean).join(' '),
-        admNo: enrolment.sid || student.admission_number || '',
+        admNo: student.admission_number || '',
         admissionNumber: student.admission_number || '',
         className: enrolment.class_id || '',
         photoUrl: student.photo_url || student.passport_url || ''
