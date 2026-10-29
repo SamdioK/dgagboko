@@ -5217,6 +5217,7 @@ function renderStaffDatabase() {
   var editingId = '';
   var fields = [['staffId','Staff ID'],['fullName','Full Name'],['gender','Gender'],['designation','Designation / Position'],['department','Department'],['qualification','Qualification'],['specialisation','Specialisation / Subject'],['employmentType','Employment Type'],['phone','Phone'],['email','Email'],['dateEmployed','Date Employed'],['biography','Short Biography']];
   var qualificationOptions = [
+    'First School Leaving Certificate (FSLC)',
     'SSCE / WAEC / NECO / NABTEB',
     'Grade II Teachers’ Certificate',
     'Nigeria Certificate in Education (NCE)',
@@ -5226,24 +5227,108 @@ function renderStaffDatabase() {
     'Master’s Degree (M.A. / M.Sc. / M.Ed. and equivalent)',
     'Doctorate (Ph.D. and equivalent)'
   ];
+  var departmentOptions = [
+    'Mathematics and Sciences',
+    'Languages and Literary Studies',
+    'Social Sciences and Humanities',
+    'Business and Commercial Studies',
+    'Technology and Computer Studies',
+    'Vocational, Agricultural and Home Economics',
+    'Arts, Religious and Physical Education',
+    'School Administration and Management',
+    'Student Affairs and Welfare',
+    'Library, Laboratories and Technical Services',
+    'Security, Logistics and General Services',
+    'Others'
+  ];
   var html = '<div class="card"><h2>Staff Database</h2><p style="color:#666;margin:8px 0 16px">Manage school staff records in one place. Records linked from existing E-Result staff lists are included; edits here control their public profile.</p><div class="grid grid-2">' +
     fields.map(function(field) {
       var id = field[0];
       var label = field[1] + (id === 'fullName' ? ' *' : '');
 
+      if (id === 'department') {
+        return '<div class="input-group"><label for="department">Department</label>' +
+          '<select id="department"><option value="">Select Department</option>' +
+          departmentOptions.map(function(option, index) {
+            var value = String(index + 1).padStart(2, '0') + '. ' + option;
+            return '<option value="' + escapeManagementText(value) + '">' +
+              escapeManagementText(value) + '</option>';
+          }).join('') +
+          '</select><div id="departmentOtherGroup" style="display:none;margin-top:10px">' +
+          '<label for="departmentOther">Specify Department</label>' +
+          '<input id="departmentOther" type="text" placeholder="Enter department name">' +
+          '</div></div>';
+      }
+
       if (id === 'qualification') {
         return '<div class="input-group" style="grid-column:1/-1">' +
-          '<label>Qualification (select all that apply)</label>' +
-          '<div id="qualificationOptions" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;padding:12px;border:1px solid #ddd;border-radius:8px">' +
-            qualificationOptions.map(function(option, index) {
-              return '<label style="display:flex;align-items:flex-start;gap:8px;font-weight:normal">' +
-                '<input type="checkbox" class="staff-qualification-option" value="' + escapeManagementText(option) + '" id="qualificationOption' + index + '">' +
-                '<span>' + escapeManagementText(option) + '</span>' +
-              '</label>';
-            }).join('') +
+          '<label style="display:block;margin-bottom:10px;font-weight:600">' +
+            'Qualification (select all that apply)' +
+          '</label>' +
+
+          '<div id="qualificationOptions" style="' +
+            'display:flex;' +
+            'flex-direction:column;' +
+            'gap:0;' +
+            'width:100%;' +
+            'box-sizing:border-box;' +
+            'padding:4px 14px;' +
+            'border:1px solid #d1d5db;' +
+            'border-radius:10px;' +
+            'background:#fff;' +
+          '">' +
+
+          qualificationOptions.map(function(option, index) {
+            return '<label for="qualificationOption' + index + '" style="' +
+              'display:grid;' +
+              'grid-template-columns:22px minmax(0,1fr);' +
+              'align-items:start;' +
+              'column-gap:12px;' +
+              'width:100%;' +
+              'box-sizing:border-box;' +
+              'margin:0;' +
+              'padding:13px 2px;' +
+              'border-bottom:' +
+                (index === qualificationOptions.length - 1
+                  ? 'none'
+                  : '1px solid #edf0f2') + ';' +
+              'font-weight:400;' +
+              'font-size:15px;' +
+              'line-height:1.5;' +
+              'cursor:pointer;' +
+            '">' +
+
+              '<input type="checkbox" ' +
+                'class="staff-qualification-option" ' +
+                'value="' + escapeManagementText(option) + '" ' +
+                'id="qualificationOption' + index + '" ' +
+                'style="' +
+                  'width:18px;' +
+                  'height:18px;' +
+                  'margin:3px 0 0;' +
+                  'padding:0;' +
+                  'accent-color:#15803d;' +
+                  'cursor:pointer;' +
+                '">' +
+
+              '<span style="' +
+                'display:block;' +
+                'min-width:0;' +
+                'overflow-wrap:anywhere;' +
+              '">' + escapeManagementText(option) + '</span>' +
+
+            '</label>';
+          }).join('') +
+
           '</div>' +
-          '<small>Select one or more qualifications.</small>' +
-          '<div id="qualificationLegacyNotice" style="display:none;color:#8a5a00;margin-top:8px"></div>' +
+
+          '<small style="display:block;margin-top:9px;color:#64748b;font-size:13px">' +
+            'Select one or more qualifications that apply to this staff member.' +
+          '</small>' +
+
+          '<div id="qualificationLegacyNotice" ' +
+            'style="display:none;color:#8a5a00;margin-top:8px"></div>' +
+
         '</div>';
       }
 
@@ -5293,6 +5378,53 @@ function renderStaffDatabase() {
     .map(function(field) {
       return field[0];
     });
+
+  function updateDepartmentOtherVisibility() {
+    var department = document.getElementById('department').value;
+    var group = document.getElementById('departmentOtherGroup');
+    group.style.display = department === '12. Others' ? 'block' : 'none';
+    if (department !== '12. Others') document.getElementById('departmentOther').value = '';
+  }
+
+  function loadDepartment(record) {
+    var saved = String(record.department || '');
+    var select = document.getElementById('department');
+    var otherInput = document.getElementById('departmentOther');
+    var options = Array.from(select.options);
+    var exactMatch = options.find(function(option) { return option.value === saved; });
+    if (saved.indexOf('12. Others — ') === 0) {
+      select.value = '12. Others';
+      otherInput.value = saved.substring('12. Others — '.length);
+      updateDepartmentOtherVisibility();
+      return;
+    }
+    var oldName = saved.replace(/^\d{1,2}\.\s*/, '');
+    var matchingOption = options.find(function(option) {
+      return option.value.replace(/^\d{1,2}\.\s*/, '') === oldName;
+    });
+
+    if (exactMatch) {
+      select.value = saved;
+      if (saved.indexOf('12. Others — ') === 0) {
+        select.value = '12. Others';
+        otherInput.value = saved.substring('12. Others — '.length);
+      } else {
+        otherInput.value = record.departmentOther || '';
+      }
+    } else if (matchingOption) {
+      select.value = matchingOption.value;
+      otherInput.value = record.departmentOther || '';
+    } else if (saved) {
+      select.value = '12. Others';
+      otherInput.value = saved;
+    } else {
+      select.value = '';
+      otherInput.value = record.departmentOther || '';
+    }
+    updateDepartmentOtherVisibility();
+  }
+
+  document.getElementById('department').addEventListener('change', updateDepartmentOtherVisibility);
 
   function getSelectedQualifications() {
     return Array.from(
@@ -5347,6 +5479,9 @@ function renderStaffDatabase() {
     inputIds.forEach(function(id) {
       document.getElementById(id).value = '';
     });
+    document.getElementById('department').value = '';
+    document.getElementById('departmentOther').value = '';
+    updateDepartmentOtherVisibility();
     document.querySelectorAll('.staff-qualification-option').forEach(
       function(input) {
         input.checked = false;
@@ -5365,7 +5500,7 @@ function renderStaffDatabase() {
     var query = document.getElementById('staffDatabaseSearch').value.trim().toLowerCase();
     var matches = staffDatabase.filter(function(record) { return fields.some(function(field) { return String(record[field[0]] || '').toLowerCase().indexOf(query) !== -1; }) || String(record.staffId || '').toLowerCase().indexOf(query) !== -1; });
     document.getElementById('staffDatabaseRows').innerHTML = matches.length ? '<div style="overflow-x:auto"><table><thead><tr><th>Photo</th><th>Staff ID</th><th>Name</th><th>Gender</th><th>Employment Type</th><th>Designation / Department</th><th>Specialisation</th><th>Status</th><th>Portal</th><th>Actions</th></tr></thead><tbody>' + matches.map(function(record) { return '<tr><td>' + (record.photo ? '<img src="' + escapeManagementText(record.photo) + '" alt="" style="width:48px;height:54px;object-fit:cover;border-radius:4px">' : '—') + '</td><td>' + escapeManagementText(record.staffId) + '</td><td>' + escapeManagementText(record.fullName) + '</td><td>' + escapeManagementText(record.gender) + '</td><td>' + escapeManagementText(record.employmentType) + '</td><td>' + escapeManagementText(record.designation) + ' / ' + escapeManagementText(record.department) + '</td><td>' + escapeManagementText(record.specialisation) + '</td><td>' + escapeManagementText(record.status) + '</td><td>' + (record.showOnPortal ? 'Yes' : 'No') + '</td><td style="white-space:nowrap"><button class="btn btn-primary staff-edit" data-id="' + escapeManagementText(record.id) + '">Edit</button> <button class="btn ' + (record.status === 'Active' ? 'btn-danger' : 'btn-success') + ' staff-toggle" data-id="' + escapeManagementText(record.id) + '">' + (record.status === 'Active' ? 'Deactivate' : 'Activate') + '</button></td></tr>'; }).join('') + '</tbody></table></div>' : '<p style="color:#999">No matching staff records.</p>';
-    document.querySelectorAll('.staff-edit').forEach(function(button) { button.addEventListener('click', function() { var record = staffDatabase.find(function(item) { return String(item.id) === button.dataset.id; }); if (!record) return; editingId = String(record.id); inputIds.forEach(function(id) { document.getElementById(id).value = record[id] || ''; }); editingQualificationLegacy = loadQualifications(record); document.getElementById('staffPhoto').value = ''; document.getElementById('staffStatus').value = record.status || 'Active'; document.getElementById('staffShowOnPortal').checked = record.showOnPortal === true; document.getElementById('saveStaffRecordBtn').textContent = 'Save Staff Changes'; document.getElementById('staffDatabaseTab').scrollIntoView({ behavior: 'smooth' }); }); });
+    document.querySelectorAll('.staff-edit').forEach(function(button) { button.addEventListener('click', function() { var record = staffDatabase.find(function(item) { return String(item.id) === button.dataset.id; }); if (!record) return; editingId = String(record.id); inputIds.forEach(function(id) { document.getElementById(id).value = record[id] || ''; }); loadDepartment(record); editingQualificationLegacy = loadQualifications(record); document.getElementById('staffPhoto').value = ''; document.getElementById('staffStatus').value = record.status || 'Active'; document.getElementById('staffShowOnPortal').checked = record.showOnPortal === true; document.getElementById('saveStaffRecordBtn').textContent = 'Save Staff Changes'; document.getElementById('staffDatabaseTab').scrollIntoView({ behavior: 'smooth' }); }); });
     document.querySelectorAll('.staff-toggle').forEach(function(button) { button.addEventListener('click', async function() { var record = staffDatabase.find(function(item) { return String(item.id) === button.dataset.id; }); if (!record) return; record.status = record.status === 'Active' ? 'Inactive' : 'Active'; await saveAllData(); renderRows(); }); });
   }
   document.getElementById('staffDatabaseSearch').addEventListener('input', renderRows);
@@ -5373,6 +5508,13 @@ function renderStaffDatabase() {
   document.getElementById('saveStaffRecordBtn').addEventListener('click', async function() {
     var fullName = document.getElementById('fullName').value.trim();
     if (!fullName) { showToast('Full Name is required', 'error'); return; }
+    var selectedDepartment = document.getElementById('department').value;
+    var customDepartment = document.getElementById('departmentOther').value.trim();
+    if (selectedDepartment === '12. Others' && !customDepartment) {
+      showToast('Please specify the department', 'error');
+      document.getElementById('departmentOther').focus();
+      return;
+    }
     if (!document.getElementById('gender').value) {
       showToast('Please select a gender', 'error');
       document.getElementById('gender').focus();
@@ -5389,6 +5531,13 @@ function renderStaffDatabase() {
     var saveRecord = async function(photo) {
       var record = staffDatabase.find(function(item) { return String(item.id) === editingId; }) || { id: 'staff-manual-' + Date.now(), sourceKey: 'manual-' + Date.now() };
       inputIds.forEach(function(id) { record[id] = document.getElementById(id).value.trim(); });
+      if (selectedDepartment === '12. Others') {
+        record.department = '12. Others — ' + customDepartment;
+        record.departmentOther = customDepartment;
+      } else {
+        record.department = selectedDepartment;
+        record.departmentOther = '';
+      }
       record.qualification = getSelectedQualifications();
       var legacyNotice = document.getElementById('qualificationLegacyNotice');
       var legacyText = '';
