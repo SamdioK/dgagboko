@@ -2205,27 +2205,46 @@ function idCardIsDeveloper() {
   return !!currentUser && currentUser.type === 'developer';
 }
 
-function idCardPermissionKey() {
-  if (!currentUser) return '';
+function idCardPermissionKeys() {
+  if (!currentUser) return [];
 
-  return String(
-    currentUser.id ||
-    currentUser.email ||
-    currentUser.admission ||
-    currentUser.name ||
-    ''
-  ).trim().toLowerCase();
+  var candidates = [
+    currentUser.id,
+    currentUser.email,
+    currentUser.admission,
+    currentUser.name,
+    currentUser.profile && currentUser.profile.id,
+    currentUser.profile && currentUser.profile.email,
+    currentUser.profile && currentUser.profile.username
+  ];
+
+  return candidates
+    .filter(function (value) {
+      return value !== null &&
+        value !== undefined &&
+        String(value).trim() !== '';
+    })
+    .map(function (value) {
+      return String(value).trim().toLowerCase();
+    })
+    .filter(function (value, index, values) {
+      return values.indexOf(value) === index;
+    });
 }
 
 function idCardCanAccess() {
   if (idCardIsDeveloper()) return true;
 
-  var key = idCardPermissionKey();
-  return !!(
-    key &&
-    schoolIdCardSettings.permissions &&
-    schoolIdCardSettings.permissions[key] === true
-  );
+  var permissions = schoolIdCardSettings &&
+    schoolIdCardSettings.permissions;
+
+  if (!permissions || typeof permissions !== 'object') {
+    return false;
+  }
+
+  return idCardPermissionKeys().some(function (key) {
+    return permissions[key] === true;
+  });
 }
 
 function idCardOwnRecord() {
