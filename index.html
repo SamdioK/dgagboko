@@ -5716,6 +5716,7 @@ function bindStudentDatabaseEvents(root) {
     if (rows) {
       rows.innerHTML = renderOfficialStudentRows(currentUser.type === 'admin', this.value);
       bindOfficialStudentLoginEvents(root);
+      bindStudentHouseEvents(root);
     }
   });
   root.querySelectorAll('input[name="studentSubmitMode"]').forEach(function(input) { input.addEventListener('change', function() {
