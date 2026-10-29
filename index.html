@@ -301,6 +301,7 @@ th { background: #f5f5f5; font-weight: 600; }
     <div id="studentResultsTab" class="hidden"></div>
     <div id="portalContentTab" class="hidden"></div>
     <div id="developerTab" class="hidden"></div>
+    <div id="schoolIdCardTab" class="hidden"></div>
   </div>
 </div>
 
@@ -2118,6 +2119,418 @@ async function saveAllData() {
   }
 }
 
+/* ================= SCHOOL ID CARD MODULE ================= */
+
+var schoolIdCardSettings = {
+  studentFee: 361.56,
+  staffFee: 478.56,
+  bulkStudentDiscount: 5,
+  reprintDiscount: 20,
+  validUntil: '',
+  schoolAddress: '',
+  schoolPhone: '',
+  logo: '',
+  permissions: {}
+};
+
+async function loadSchoolIdCardSettings() {
+  var saved = await cloudStorage.load('schoolIdCardSettings');
+
+  if (saved && typeof saved === 'object') {
+    schoolIdCardSettings = Object.assign(
+      {},
+      schoolIdCardSettings,
+      saved
+    );
+  }
+}
+
+function idCardEscape(value) {
+  return String(value == null ? '' : value).replace(
+    /[&<>"']/g,
+    function (ch) {
+      return {
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+      }[ch];
+    }
+  );
+}
+
+function idCardIsDeveloper() {
+  return !!currentUser && currentUser.type === 'developer';
+}
+
+function idCardPermissionKey() {
+  if (!currentUser) return '';
+
+  return String(
+    currentUser.id ||
+    currentUser.email ||
+    currentUser.admission ||
+    currentUser.name ||
+    ''
+  ).trim().toLowerCase();
+}
+
+function idCardCanAccess() {
+  if (idCardIsDeveloper()) return true;
+
+  var key = idCardPermissionKey();
+  return !!(
+    key &&
+    schoolIdCardSettings.permissions &&
+    schoolIdCardSettings.permissions[key] === true
+  );
+}
+
+function idCardOwnRecord() {
+  if (!currentUser) return null;
+
+  if (currentUser.type === 'student') {
+    var admission = String(currentUser.admission || '').trim().toLowerCase();
+
+    return students.find(function (s) {
+      return String(s.admNo || s.admissionNumber || '')
+        .trim().toLowerCase() === admission;
+    }) || null;
+  }
+
+  var email = String(
+    currentUser.email ||
+    (currentUser.profile && currentUser.profile.email) ||
+    ''
+  ).trim().toLowerCase();
+
+  var name = String(currentUser.name || '').trim().toLowerCase();
+
+  return staffDatabase.find(function (s) {
+    var staffEmail = String(s.email || '').trim().toLowerCase();
+    var staffName = String(s.fullName || '').trim().toLowerCase();
+
+    return (email && staffEmail === email) ||
+      (!email && name && staffName === name);
+  }) || null;
+}
+
+function idCardBuildData(record, kind) {
+  if (!record) return null;
+
+  if (kind === 'student') {
+    return {
+      kind: 'Student',
+      name: record.studentName || record.fullName || record.full_name || '',
+      identifier: record.admNo || record.admissionNumber || '',
+      className: record.className || record.class_name || '',
+      photo: record.photoUrl || record.photo_url ||
+        record.passportUrl || record.passport_url || record.photo || '',
+      phone: record.guardianPhone || record.guardian_phone || ''
+    };
+  }
+
+  return {
+    kind: 'Staff',
+    name: record.fullName || record.full_name || currentUser.name || '',
+    identifier: record.staffId || record.staff_id || record.id || '',
+    className: record.designation || record.department || '',
+    photo: record.photoUrl || record.photo_url || record.photo || '',
+    phone: record.phone || '',
+    email: record.email || ''
+  };
+}
+
+function renderSchoolIdCard() {
+  var root = document.getElementById('schoolIdCardTab');
+  if (!root) return;
+
+  root.innerHTML =
+    '<div class="card">' +
+      '<h2>School ID Card</h2>' +
+      '<p style="color:#66736b;margin:8px 0 16px;">' +
+        'Preview and print authorised identification cards.' +
+      '</p>' +
+      '<div id="idCardMessage" class="alert alert-info">' +
+        'Checking card access…' +
+      '</div>' +
+      '<div id="idCardContent"></div>' +
+    '</div>';
+
+  loadSchoolIdCardSettings().then(function () {
+    renderSchoolIdCardContent();
+  }).catch(function () {
+    var msg = document.getElementById('idCardMessage');
+    if (msg) msg.textContent = 'Unable to load ID card settings.';
+  });
+}
+
+function renderSchoolIdCardContent() {
+  var message = document.getElementById('idCardMessage');
+  var content = document.getElementById('idCardContent');
+  if (!message || !content) return;
+
+  if (!idCardCanAccess()) {
+    message.className = 'alert alert-error';
+    message.textContent =
+      'You have not been granted ID card access. Contact the Portal Developer.';
+    content.innerHTML = '';
+    return;
+  }
+
+  message.className = 'alert alert-info';
+  message.textContent = 'ID card access is enabled for this account.';
+
+  var html = '';
+
+  if (idCardIsDeveloper()) {
+    html +=
+      '<div class="card">' +
+        '<h3>Card Design and Validity Settings</h3>' +
+        '<p style="color:#66736b;font-size:12px;margin:8px 0 14px;">' +
+          'Payment settings will be added in a later stage.' +
+        '</p>' +
+        '<div class="grid grid-2">' +
+          '<div class="input-group"><label>School address</label>' +
+            '<input id="idCardAddress" value="' +
+              idCardEscape(schoolIdCardSettings.schoolAddress) + '">' +
+          '</div>' +
+          '<div class="input-group"><label>School phone</label>' +
+            '<input id="idCardPhone" value="' +
+              idCardEscape(schoolIdCardSettings.schoolPhone) + '">' +
+          '</div>' +
+          '<div class="input-group"><label>Card validity date</label>' +
+            '<input id="idCardValidity" type="date" value="' +
+              idCardEscape(schoolIdCardSettings.validUntil) + '">' +
+          '</div>' +
+          '<div class="input-group"><label>School logo URL</label>' +
+            '<input id="idCardLogo" value="' +
+              idCardEscape(schoolIdCardSettings.logo) + '">' +
+          '</div>' +
+        '</div>' +
+        '<button class="btn btn-success" id="idCardSaveSettings">' +
+          'Save Card Settings' +
+        '</button>' +
+        '<hr style="margin:18px 0;">' +
+        '<h3>Card Access Permissions</h3>' +
+        '<p style="font-size:12px;color:#66736b;margin:8px 0;">' +
+          'Grant access using the account email, profile ID or admission number.' +
+        '</p>' +
+        '<div class="input-group"><label>Account identifier</label>' +
+          '<input id="idCardPermissionUser" placeholder="Email, profile ID or admission number">' +
+        '</div>' +
+        '<button class="btn btn-primary" id="idCardGrant">' +
+          'Grant Card Access' +
+        '</button> ' +
+        '<button class="btn btn-danger" id="idCardRevoke">' +
+          'Revoke Card Access' +
+        '</button>' +
+      '</div>';
+  }
+
+  html += '<div class="card"><h3>My ID Card</h3><div id="myIdCardPreview"></div>' +
+    '<button class="btn btn-primary" id="idCardPrintOwn">Print My Card</button></div>';
+
+  if (idCardIsDeveloper() || currentUser.type === 'admin') {
+    html +=
+      '<div class="card"><h3>Bulk Student Card Preview</h3>' +
+        '<p style="font-size:12px;color:#66736b;">' +
+          'This stage supports preview only. Payment and bulk print authorisation ' +
+          'will be added later.' +
+        '</p>' +
+        '<div class="input-group"><label>Admission numbers (one per line)</label>' +
+          '<textarea id="idCardBulkIds" rows="4"></textarea></div>' +
+        '<button class="btn btn-primary" id="idCardBulkPreview">' +
+          'Preview Student Cards' +
+        '</button><div id="idCardBulkResults"></div>' +
+      '</div>';
+  }
+
+  content.innerHTML = html;
+
+  var ownRecord = idCardOwnRecord();
+  var ownKind = currentUser.type === 'student' ? 'student' : 'staff';
+  var ownData = idCardBuildData(ownRecord, ownKind);
+
+  if (ownData) {
+    renderIdCardPreview(ownData, 'myIdCardPreview');
+  } else {
+    document.getElementById('myIdCardPreview').innerHTML =
+      '<div class="alert alert-error">' +
+      'Your card record could not be matched to your signed-in account. ' +
+      'Contact the school administrator.' +
+      '</div>';
+  }
+
+  document.getElementById('idCardPrintOwn').addEventListener('click', function () {
+    if (!idCardCanAccess() || !ownData) {
+      showToast('Card access is not authorised.', 'error');
+      return;
+    }
+    window.print();
+  });
+
+  if (idCardIsDeveloper()) {
+    document.getElementById('idCardSaveSettings').addEventListener('click', saveIdCardSettings);
+    document.getElementById('idCardGrant').addEventListener('click', function () {
+      updateIdCardPermission(true);
+    });
+    document.getElementById('idCardRevoke').addEventListener('click', function () {
+      updateIdCardPermission(false);
+    });
+  }
+
+  var bulkButton = document.getElementById('idCardBulkPreview');
+  if (bulkButton) bulkButton.addEventListener('click', previewBulkIdCards);
+}
+
+async function saveIdCardSettings() {
+  if (!idCardIsDeveloper()) {
+    showToast('Only the Portal Developer can change card settings.', 'error');
+    return;
+  }
+
+  schoolIdCardSettings.schoolAddress =
+    document.getElementById('idCardAddress').value.trim();
+  schoolIdCardSettings.schoolPhone =
+    document.getElementById('idCardPhone').value.trim();
+  schoolIdCardSettings.validUntil =
+    document.getElementById('idCardValidity').value;
+  schoolIdCardSettings.logo =
+    document.getElementById('idCardLogo').value.trim();
+
+  var ok = await cloudStorage.save(
+    'schoolIdCardSettings',
+    schoolIdCardSettings
+  );
+
+  showToast(
+    ok ? 'Card settings saved.' : 'Unable to save settings.',
+    ok ? 'success' : 'error'
+  );
+}
+
+async function updateIdCardPermission(allowed) {
+  if (!idCardIsDeveloper()) return;
+
+  var input = document.getElementById('idCardPermissionUser');
+  var key = String(input.value || '').trim().toLowerCase();
+
+  if (!key) {
+    showToast('Enter an account identifier.', 'error');
+    return;
+  }
+
+  schoolIdCardSettings.permissions =
+    schoolIdCardSettings.permissions || {};
+
+  if (allowed) {
+    schoolIdCardSettings.permissions[key] = true;
+  } else {
+    delete schoolIdCardSettings.permissions[key];
+  }
+
+  var ok = await cloudStorage.save(
+    'schoolIdCardSettings',
+    schoolIdCardSettings
+  );
+
+  showToast(
+    ok ? (allowed ? 'Card access granted.' : 'Card access revoked.') :
+      'Could not save the permission change.',
+    ok ? 'success' : 'error'
+  );
+
+  renderSchoolIdCardContent();
+}
+
+function renderIdCardPreview(data, targetId) {
+  var target = document.getElementById(targetId);
+  if (!target) return;
+
+  var schoolName = (currentSchool &&
+    (currentSchool.schoolName || currentSchool.name)) ||
+    'DE-GLOBAL ACADEMY GBOKO';
+
+  var validUntil = schoolIdCardSettings.validUntil || 'As configured by the school';
+
+  target.innerHTML =
+    '<div style="width:100%;max-width:350px;border:1px solid #ddd;' +
+      'border-radius:10px;overflow:hidden;background:#fff;margin:10px 0 16px;' +
+      'box-shadow:0 2px 8px #0001;">' +
+      '<div style="background:#176b43;color:white;text-align:center;padding:14px;">' +
+        (schoolIdCardSettings.logo ?
+          '<img src="' + idCardEscape(schoolIdCardSettings.logo) +
+          '" alt="School logo" style="width:42px;height:42px;object-fit:contain;">' : '') +
+        '<strong style="display:block;">' + idCardEscape(schoolName) + '</strong>' +
+        '<small>SCHOOL IDENTIFICATION CARD</small>' +
+      '</div>' +
+      '<div style="height:4px;background:#d5ad45;"></div>' +
+      '<div style="display:flex;gap:12px;padding:14px;min-height:130px;">' +
+        '<img src="' + idCardEscape(data.photo || '') + '" alt="Cardholder photo" ' +
+          'style="width:84px;height:102px;object-fit:cover;border:1px solid #ddd;" ' +
+          'onerror="this.style.visibility=\'hidden\'">' +
+        '<div style="font-size:12px;line-height:1.7;overflow-wrap:anywhere;">' +
+          '<strong style="display:block;font-size:14px;color:#176b43;">' +
+            idCardEscape(data.name) + '</strong>' +
+          '<div>Type: ' + idCardEscape(data.kind) + '</div>' +
+          '<div>ID: ' + idCardEscape(data.identifier) + '</div>' +
+          '<div>' + idCardEscape(data.className) + '</div>' +
+          '<div>Valid until: ' + idCardEscape(validUntil) + '</div>' +
+        '</div>' +
+      '</div>' +
+      '<div style="height:4px;background:#d5ad45;"></div>' +
+      '<div style="padding:10px;font-size:11px;color:#555;">' +
+        idCardEscape(schoolIdCardSettings.schoolAddress || '') + '<br>' +
+        idCardEscape(schoolIdCardSettings.schoolPhone || '') +
+      '</div>' +
+    '</div>';
+}
+
+function previewBulkIdCards() {
+  if (!(idCardIsDeveloper() ||
+      (currentUser && currentUser.type === 'admin'))) {
+    showToast('Bulk preview is not authorised.', 'error');
+    return;
+  }
+
+  var ids = document.getElementById('idCardBulkIds').value
+    .split(/[\n,;]+/)
+    .map(function (value) { return value.trim().toLowerCase(); })
+    .filter(Boolean);
+
+  if (!ids.length) {
+    showToast('Enter student admission numbers.', 'error');
+    return;
+  }
+
+  var results = document.getElementById('idCardBulkResults');
+  results.innerHTML = '';
+
+  ids.forEach(function (id, index) {
+    var record = students.find(function (s) {
+      return String(s.admNo || s.admissionNumber || '')
+        .trim().toLowerCase() === id;
+    });
+
+    if (!record) return;
+
+    var data = idCardBuildData(record, 'student');
+    var wrapper = document.createElement('div');
+    wrapper.innerHTML = '<div id="idCardBulkItem' + index + '"></div>';
+    results.appendChild(wrapper);
+    renderIdCardPreview(data, 'idCardBulkItem' + index);
+  });
+
+  if (!results.children.length) {
+    results.innerHTML =
+      '<div class="alert alert-error">No matching student records found.</div>';
+  }
+}
+
+/* =============== END SCHOOL ID CARD MODULE =============== */
+
 // ===================== APP SHELL =====================
 function logActivity(action, affectedRecord, actorName) {
   activityLog.push({ user: actorName || (currentUser ? currentUser.name : 'System'), action: action, affectedRecord: affectedRecord || '', timestamp: new Date().toISOString() });
@@ -2138,7 +2551,7 @@ function showApp() {
 
   var tabs;
   if (currentUser.type === 'admin') {
-    tabs = ['dashboard', 'arms', 'masters', 'school', 'profile', 'assessment', 'teacherSignatures', 'management', 'staffDatabase', 'studentDatabase', 'passportRegistration', 'userManagement', 'release', 'view', 'compute', 'print', 'portalContent'];
+    tabs = ['dashboard', 'arms', 'masters', 'school', 'profile', 'assessment', 'teacherSignatures', 'management', 'staffDatabase', 'studentDatabase', 'passportRegistration', 'userManagement', 'release', 'view', 'compute', 'print', 'portalContent', 'schoolIdCard'];
   } else if (currentUser.type === 'subadmin') {
     tabs = [];
     if (hasSubAdminPermission('enterResults') || hasSubAdminPermission('editResults')) tabs.push('input');
@@ -2151,13 +2564,13 @@ function showApp() {
     if (hasSubAdminPermission('generateSheets')) tabs.push('print');
     if (tabs.length === 0) { showToast('No features are assigned to this account. Contact the main administrator.', 'error'); handleLogout(); return; }
   } else if (currentUser.type === 'student') {
-    tabs = ['studentResults'];
+    tabs = ['studentResults', 'schoolIdCard'];
   } else if (currentUser.type === 'developer') {
-    tabs = ['developer'];
+    tabs = ['developer', 'schoolIdCard'];
   } else if (currentUser.type === 'formmaster') {
-    tabs = ['studentDatabase', 'subjectRegistration', 'input', 'view'];
+    tabs = ['studentDatabase', 'input', 'view', 'schoolIdCard'];
   } else {
-    tabs = ['input', 'view'];
+    tabs = ['input', 'view', 'schoolIdCard'];
   }
 
   var tabsContainer = document.getElementById('tabsContainer');
@@ -2166,7 +2579,7 @@ function showApp() {
     var btn = document.createElement('button');
     btn.className = 'tab';
     if (idx === 0) btn.classList.add('active');
-    var tabLabels = { profile: 'Admin Profile', teacherSignatures: "Teachers' Signature", management: 'Management Staff', staffDatabase: 'Staff Database', studentDatabase: 'Student Database', subjectRegistration: 'Subject Registration', passportRegistration: 'Student Passport Registration', userManagement: 'User Management', release: 'Release Results', studentResults: 'Student Results', portalContent: 'Portal Options', developer: 'Developer Console' };
+    var tabLabels = { profile: 'Admin Profile', teacherSignatures: "Teachers' Signature", management: 'Management Staff', staffDatabase: 'Staff Database', studentDatabase: 'Student Database', subjectRegistration: 'Subject Registration', passportRegistration: 'Student Passport Registration', userManagement: 'User Management', release: 'Release Results', studentResults: 'Student Results', portalContent: 'Portal Options', developer: 'Developer Console', schoolIdCard: 'School ID Card' };
     btn.textContent = tabLabels[tab] || tab.charAt(0).toUpperCase() + tab.slice(1);
     btn.addEventListener('click', function() {
       document.querySelectorAll('.tab').forEach(function(t) { t.classList.remove('active'); });
@@ -2249,7 +2662,7 @@ function showTab(tabName) {
   var requiredPermission = { input: 'enterResults', view: 'manageStudents', masters: 'manageTeachers', school: 'manageSchool', management: 'manageBoard', userManagement: 'createAdmins', release: 'publishResults', print: 'generateSheets' };
   if (currentUser && currentUser.type === 'subadmin' && (!requiredPermission[tabName] || (!hasSubAdminPermission(requiredPermission[tabName]) && !(tabName === 'input' && hasSubAdminPermission('editResults'))))) return;
   if (currentUser && currentUser.type === 'student' && tabName !== 'studentResults') return;
-  ['dashboard', 'arms', 'masters', 'school', 'profile', 'assessment', 'teacherSignatures', 'management', 'staffDatabase', 'studentDatabase', 'subjectRegistration', 'passportRegistration', 'input', 'compute', 'view', 'print', 'userManagement', 'release', 'studentResults', 'portalContent', 'developer'].forEach(function(t) {
+  ['dashboard', 'arms', 'masters', 'school', 'profile', 'assessment', 'teacherSignatures', 'management', 'staffDatabase', 'studentDatabase', 'subjectRegistration', 'passportRegistration', 'input', 'compute', 'view', 'print', 'userManagement', 'release', 'studentResults', 'portalContent', 'developer', 'schoolIdCard'].forEach(function(t) {
     document.getElementById(t + 'Tab').classList.add('hidden');
   });
   document.getElementById(tabName + 'Tab').classList.remove('hidden');
@@ -2274,6 +2687,7 @@ function showTab(tabName) {
   else if (tabName === 'studentResults') renderStudentResults();
   else if (tabName === 'portalContent') renderPortalContentAdmin();
   else if (tabName === 'developer') renderDeveloperConsole();
+  else if (tabName === 'schoolIdCard') renderSchoolIdCard();
 }
 
 // ===================== SUB-ADMINISTRATOR + RESULTS ACCESS =====================
