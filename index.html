@@ -4015,7 +4015,21 @@ function renderOfficialStudentCatalogue(isAdmin) {
   function renderOfficialDetails() {
     if (!studentDbState.activeClassId || studentDbState.officialPanelClosed) return '';
     var className = studentDbClassLabel(studentDbState.activeClassId);
-    var details = studentDbState.officialPanelMinimized ? '' : '<div class="student-class-details-body"><div class="input-group" style="margin:12px 0"><label for="studentDbSearch">Search Student (SID or name)</label><input id="studentDbSearch" type="search" placeholder="Search by SID or student name"></div><div style="overflow-x:auto"><table><thead><tr><th>S/N</th><th>SID</th><th>Student Name</th><th>Gender</th><th>Date of Birth</th><th>Guardian</th><th>Status</th>' + (isAdmin ? '<th>Login Account</th>' : '<th>Action</th>') + '</tr></thead><tbody id="studentDbOfficialRows">' + renderOfficialStudentRows(isAdmin, '') + '</tbody></table></div></div>';
+    var details = studentDbState.officialPanelMinimized ? '' : '<div class="student-class-details-body"><div class="input-group" style="margin:12px 0"><label for="studentDbSearch">Search Student (SID or name)</label><input id="studentDbSearch" type="search" placeholder="Search by SID or student name"></div>' +
+      '<div style="overflow-x:auto"><table><thead><tr>' +
+      '<th>S/N</th>' +
+      '<th>SID (Internal)</th>' +
+      '<th>Admission Number</th>' +
+      '<th>Student Name</th>' +
+      '<th>Gender</th>' +
+      '<th>Date of Birth</th>' +
+      '<th>Guardian</th>' +
+      '<th>Status</th>' +
+      '<th>Student House</th>' +
+      (isAdmin ? '<th>Login Account</th>' : '<th>Action</th>') +
+      '</tr></thead><tbody id="studentDbOfficialRows">' +
+      renderOfficialStudentRows(isAdmin, '') +
+      '</tbody></table></div></div>';
     return '<div class="student-class-details" style="grid-column:1/-1;margin-top:14px;padding:14px;border:1px solid #d9e1f2;border-radius:10px;background:#fff"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><h3>' + escapeManagementText(className) + ' — Official Students</h3><div><button type="button" class="btn btn-primary student-db-minimize-details">' + (studentDbState.officialPanelMinimized ? 'Expand' : 'Minimize') + '</button> <button type="button" class="btn btn-danger student-db-close-details">Close</button></div></div>' + details + '</div>';
   }
   function renderLevel(level) {
@@ -4042,17 +4056,75 @@ function renderOfficialStudentCatalogue(isAdmin) {
   return '<div class="input-group student-class-picker"><label for="studentDbClass">Class Arm</label><select id="studentDbClass" class="student-class-native-select" aria-label="Select class arm">' + options + '</select><div class="student-class-picker-groups"><div class="student-class-picker-group basic">' + levelSections.basic.join('') + '</div><div class="student-class-picker-group senior">' + levelSections.senior.join('') + '</div></div>' + otherHtml + '</div>';
 }
 
+function renderStudentHouseField(student) {
+  var value = String(student && student.student_house || '');
+  var options = ['Europe', 'Africa', 'Asia'];
+
+  return '<div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap">' +
+    '<select class="student-house-select" aria-label="Student House">' +
+    '<option value="">Not assigned</option>' +
+    options.map(function(option) {
+      return '<option value="' + option + '"' +
+        (value === option ? ' selected' : '') + '>' +
+        option + '</option>';
+    }).join('') +
+    '</select>' +
+    '<button type="button" class="btn btn-primary student-house-save">Save</button>' +
+    '</div>' +
+    '<small class="student-house-status" role="status"></small>';
+}
+
 function renderOfficialStudentRows(isAdmin, query) {
   var list = studentDbState.official.filter(function(item) {
     var student = item.student || {};
     var enrolment = item.enrolment || {};
     var term = String(query || '').toLowerCase();
-    return !term || String(enrolment.sid || '').toLowerCase().includes(term) || studentDbName(student).toLowerCase().includes(term);
+
+    return !term ||
+      String(enrolment.sid || '').toLowerCase().includes(term) ||
+      String(student.admission_number || '').toLowerCase().includes(term) ||
+      studentDbName(student).toLowerCase().includes(term);
   });
+
   return list.map(function(item, index) {
-    var student = item.student, enrolment = item.enrolment;
-    return '<tr data-official-student-id="' + escapeManagementText(student.id) + '"><td>' + (index + 1) + '</td><td>' + escapeManagementText(enrolment.sid || '—') + '</td><td>' + escapeManagementText(studentDbName(student)) + '</td><td>' + escapeManagementText(student.gender || '—') + '</td><td>' + escapeManagementText(studentDbDate(student.date_of_birth) || '—') + '</td><td>' + escapeManagementText(student.guardian_name || '—') + '<br><small>' + escapeManagementText(student.guardian_phone || '') + '</small></td><td>' + escapeManagementText(student.status || '—') + '</td>' + (isAdmin ? '<td class="student-login-account-cell">' + renderOfficialStudentLoginAction(item) + '</td>' : '<td><button class="btn btn-primary student-correction-start" data-student="' + escapeManagementText(student.id) + '">Request Correction</button></td>') + '</tr>';
-  }).join('') || '<tr><td colspan="' + (isAdmin ? '8' : '8') + '" style="color:#777">No official students enrolled in this class for the active session.</td></tr>';
+    var student = item.student || {};
+    var enrolment = item.enrolment || {};
+
+    var houseCell = isAdmin
+      ? '<td>' + renderStudentHouseField(student) + '</td>'
+      : '<td>' + escapeManagementText(
+          student.student_house || 'Not assigned'
+        ) + '</td>';
+
+    var actionCell = isAdmin
+      ? '<td class="student-login-account-cell">' +
+          renderOfficialStudentLoginAction(item) + '</td>'
+      : '<td><button class="btn btn-primary student-correction-start" data-student="' +
+          escapeManagementText(student.id) +
+          '">Request Correction</button></td>';
+
+    return '<tr data-official-student-id="' +
+      escapeManagementText(student.id) + '">' +
+      '<td>' + (index + 1) + '</td>' +
+      '<td>' + escapeManagementText(enrolment.sid || '—') + '</td>' +
+      '<td>' + escapeManagementText(student.admission_number || '—') + '</td>' +
+      '<td>' + escapeManagementText(studentDbName(student)) + '</td>' +
+      '<td>' + escapeManagementText(student.gender || '—') + '</td>' +
+      '<td>' + escapeManagementText(
+        studentDbDate(student.date_of_birth) || '—'
+      ) + '</td>' +
+      '<td>' + escapeManagementText(student.guardian_name || '—') +
+      '<br><small>' + escapeManagementText(
+        student.guardian_phone || ''
+      ) + '</small></td>' +
+      '<td>' + escapeManagementText(student.status || '—') + '</td>' +
+      houseCell +
+      actionCell +
+      '</tr>';
+  }).join('') ||
+    '<tr><td colspan="10" style="color:#777">' +
+    'No official students enrolled in this class for the active session.' +
+    '</td></tr>';
 }
 
 function renderOfficialStudentLoginAction(item) {
