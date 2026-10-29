@@ -2608,7 +2608,7 @@ async function previewBulkIdCards() {
     var studentResult = await supabaseClient
       .from('students')
       .select(
-        'id,school_id,admission_number,first_name,middle_name,last_name,full_name,gender,date_of_birth,guardian_phone'
+        'id,school_id,admission_number,first_name,middle_name,last_name,gender,date_of_birth,guardian_phone'
       )
       .eq('school_id', schoolId)
       .in('admission_number', ids);
@@ -2661,7 +2661,7 @@ async function previewBulkIdCards() {
       var missingResult = await supabaseClient
         .from('students')
         .select(
-          'id,school_id,admission_number,first_name,middle_name,last_name,full_name,gender,date_of_birth,guardian_phone'
+          'id,school_id,admission_number,first_name,middle_name,last_name,gender,date_of_birth,guardian_phone'
         )
         .eq('school_id', schoolId)
         .in('id', missingIds);
