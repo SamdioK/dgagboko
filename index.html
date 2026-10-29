@@ -169,7 +169,9 @@ th { background: #f5f5f5; font-weight: 600; }
           <option value="subjectteacher">Subject Teacher</option>
           <option value="subadmin">Sub-Administrator</option>
           <option value="student">Student</option>
-          <option value="developer">Portal Developer</option>
+          <option value="developer" id="developerLoginOption" hidden>
+            Portal Developer
+          </option>
         </select>
       </div>
 
@@ -197,11 +199,25 @@ th { background: #f5f5f5; font-weight: 600; }
       </div>
 
       <div id="developerLoginFields" class="hidden">
-        <div class="input-group"><label>Developer Email</label><input type="email" id="developerEmail" autocomplete="username"></div>
-        <div class="input-group"><label>Developer Password</label><input type="password" id="developerPassword" autocomplete="current-password"></div>
-        <p style="font-size:12px;color:#666;margin-bottom:10px;">On first setup only, enter the school administrator credentials below to authorize developer account creation.</p>
-        <div class="input-group"><label>Initial Setup: School Admin Email</label><input type="email" id="developerSetupAdminEmail" autocomplete="username"></div>
-        <div class="input-group"><label>Initial Setup: School Admin Password</label><input type="password" id="developerSetupAdminPassword" autocomplete="current-password"></div>
+        <div class="input-group">
+          <label for="developerEmail">Developer Email</label>
+          <input
+            type="email"
+            id="developerEmail"
+            autocomplete="username"
+            placeholder="Enter your developer account email"
+          >
+        </div>
+
+        <div class="input-group">
+          <label for="developerPassword">Developer Password</label>
+          <input
+            type="password"
+            id="developerPassword"
+            autocomplete="current-password"
+            placeholder="Enter your developer password"
+          >
+        </div>
       </div>
 
       <button class="btn btn-primary" id="loginBtn" style="width: 100%; padding: 12px; font-size: 16px;">Login</button>
@@ -300,6 +316,7 @@ th { background: #f5f5f5; font-weight: 600; }
     <div id="releaseTab" class="hidden"></div>
     <div id="studentResultsTab" class="hidden"></div>
     <div id="portalContentTab" class="hidden"></div>
+    <div id="developerDashboardTab" class="hidden"></div>
     <div id="developerTab" class="hidden"></div>
     <div id="schoolIdCardTab" class="hidden"></div>
   </div>
@@ -543,7 +560,25 @@ function setHeaderLogo(logoDataUrl) {
 
 function setupEventListeners() {
   var userTypeSelect = document.getElementById('userType');
-  if (userTypeSelect) userTypeSelect.addEventListener('change', handleUserTypeChange);
+  if (userTypeSelect) {
+    userTypeSelect.addEventListener('change', handleUserTypeChange);
+
+    var developerOption = document.getElementById('developerLoginOption');
+    var params = new URLSearchParams(window.location.search);
+    var developerAccess = params.get('access') === 'developer';
+
+    if (developerOption) {
+      developerOption.hidden = !developerAccess;
+    }
+
+    if (developerAccess) {
+      userTypeSelect.value = 'developer';
+
+      handleUserTypeChange({
+        target: userTypeSelect
+      });
+    }
+  }
 
   var setupBtn = document.getElementById('setupBtn');
   if (setupBtn) setupBtn.addEventListener('click', handleSetup);
@@ -598,7 +633,12 @@ function setupEventListeners() {
 async function handleUserTypeChange(e) {
   var userType = e.target.value;
   var genericEmailGroup = document.getElementById('genericAuthEmailGroup');
-  if (genericEmailGroup) genericEmailGroup.classList.toggle('hidden', userType === 'student');
+  if (genericEmailGroup) {
+    genericEmailGroup.classList.toggle(
+      'hidden',
+      userType === 'student' || userType === 'developer'
+    );
+  }
   var adminFields = document.getElementById('adminLoginFields');
   var fmFields = document.getElementById('formmasterFields');
   var stFields = document.getElementById('subjectTeacherFields');
@@ -935,7 +975,10 @@ async function handleSupabaseLogin(userType, errorDiv) {
     await handleStudentAdmissionLogin(errorDiv);
     return;
   }
-  var email = (document.getElementById('authEmail').value || '').trim();
+  var emailInputId = userType === 'developer'
+    ? 'developerEmail'
+    : 'authEmail';
+  var email = (document.getElementById(emailInputId).value || '').trim();
   var passwordInput = {
     admin: 'adminPassword', formmaster: 'armPassword', subjectteacher: 'assignmentPassword',
     subadmin: 'subadminPassword', student: 'studentPassword', developer: 'developerPassword'
@@ -961,29 +1004,61 @@ async function handleSupabaseLogin(userType, errorDiv) {
     var profile = profileResult.data;
     if (!profile) throw new Error('No application profile is linked to this Supabase account.');
     if (!profile.is_active) throw new Error('This account is inactive. Contact the school administrator.');
-    if (!profile.school_id) throw new Error('This account is not linked to a school. Contact the administrator.');
+    if (!profile.school_id && userType !== 'developer') throw new Error('This account is not linked to a school. Contact the administrator.');
     var profileRolesResult = await supabaseClient.from('profile_roles').select('role').eq('profile_id', profile.id);
     if (profileRolesResult.error) throw profileRolesResult.error;
-    var activeRoles = [profile.role].concat((profileRolesResult.data || []).map(function(item) { return item.role; }))
-      .filter(function(role, index, roles) { return role && roles.indexOf(role) === index; });
+    var activeRoles = [profile.role]
+      .concat((profileRolesResult.data || []).map(function(item) {
+        return item.role;
+      }))
+      .filter(function(role, index, roles) {
+        return role && roles.indexOf(role) === index;
+      });
+
+    if (userType === 'developer' &&
+        activeRoles.indexOf('portal_developer') === -1) {
+      throw new Error(
+        'This account is not authorised for Portal Developer access.'
+      );
+    }
+
     if (!expectedRoles[userType] || !expectedRoles[userType].some(function(role) { return activeRoles.indexOf(role) !== -1; })) {
       throw new Error('This account does not have the selected login responsibility.');
     }
 
-    var schoolResult = await supabaseClient.from('schools').select('*').eq('id', profile.school_id).maybeSingle();
-    if (schoolResult.error) throw schoolResult.error;
-    if (!schoolResult.data) throw new Error('The school linked to this account could not be loaded.');
-    var dbSchool = schoolResult.data;
-    currentSchool = {
+    var dbSchool = null;
+    if (profile.school_id) {
+      var schoolResult = await supabaseClient.from('schools').select('*').eq('id', profile.school_id).maybeSingle();
+      if (schoolResult.error) throw schoolResult.error;
+      if (!schoolResult.data) throw new Error('The school linked to this account could not be loaded.');
+      dbSchool = schoolResult.data;
+    } else if (activeRoles.indexOf('portal_developer') === -1) {
+      throw new Error('This account is not linked to a school. Contact the administrator.');
+    }
+    currentSchool = dbSchool ? {
       schoolId: dbSchool.id, supabaseSchoolId: dbSchool.id, schoolName: dbSchool.name,
       name: dbSchool.name, location: dbSchool.address || '', address: dbSchool.address || '',
       email: dbSchool.email || '', phone: dbSchool.phone || '', logo: dbSchool.logo_url || '',
       session: '', adminName: profile.full_name, profileId: profile.id
+    } : {
+      schoolId: 'DEVELOPER', schoolName: 'Developer Portal', name: 'Developer Portal',
+      location: '', address: '', email: profile.email || '', phone: '', logo: '',
+      session: '', adminName: profile.full_name || 'Portal Developer', profileId: profile.id
     };
-    authenticatedProfile = profile;
-    cloudStorage.setSchoolId(String(profile.school_id));
-    await loadSchoolData();
-    await loadSupabaseAssessmentConfigurations();
+    authenticatedProfile = Object.assign({}, profile, {
+      active_roles: activeRoles
+    });
+    cloudStorage.setSchoolId(String(profile.school_id || 'DEVELOPER'));
+    if (dbSchool) {
+      await loadSchoolData();
+      await loadSupabaseAssessmentConfigurations();
+    } else {
+      schoolInfo = {};
+      activeAcademicSession = null;
+      activeAssessmentTerm = null;
+      availableAcademicSessions = [];
+      availableAssessmentTerms = [];
+    }
 
     var selectedRole = expectedRoles[userType].find(function(role) { return activeRoles.indexOf(role) !== -1; });
     var appType = { administrator: 'admin', sub_administrator: 'subadmin', form_master: 'formmaster', subject_teacher: 'subjectteacher', portal_developer: 'developer', student: 'student' }[selectedRole];
@@ -1204,81 +1279,46 @@ async function handleSetup() {
 }
 
 async function handleLogin() {
-  var userType = document.getElementById('userType').value;
-  var errorDiv = document.getElementById('loginError');
-  errorDiv.classList.add('hidden');
-  if (!userType) { errorDiv.textContent = 'Please select login type'; errorDiv.classList.remove('hidden'); return; }
-  await handleSupabaseLogin(userType, errorDiv);
-  return;
+    var userType = document.getElementById('userType').value;
+    var errorDiv = document.getElementById('loginError');
+    var loginButton = document.getElementById('loginBtn');
 
-  var school = await cloudStorage.globalLoad('school:main');
-  if (!school) { errorDiv.textContent = 'No school set up yet.'; errorDiv.classList.remove('hidden'); return; }
-  cloudStorage.setSchoolId('MAIN');
-  var accessSettings = await cloudStorage.load('portalSettings');
-  var developerLogin = userType === 'developer';
-  if (!developerLogin && accessSettings && accessSettings.portalEnabled === false) { errorDiv.textContent = 'The school portal is currently turned off. Contact the Portal Developer.'; errorDiv.classList.remove('hidden'); return; }
-  if (!developerLogin && accessSettings && accessSettings.licenseUntil && Date.now() > accessSettings.licenseUntil) { errorDiv.textContent = 'Portal access has expired. Contact the Portal Developer to renew.'; errorDiv.classList.remove('hidden'); return; }
+    errorDiv.classList.add('hidden');
+    errorDiv.textContent = '';
 
-  if (userType === 'admin') {
-    var username = document.getElementById('adminUsername').value.trim();
-    var password = document.getElementById('adminPassword').value;
-    if (!username || !password) { errorDiv.textContent = 'Please enter credentials'; errorDiv.classList.remove('hidden'); return; }
+    if (!userType) {
+        errorDiv.textContent = 'Please select a login type.';
+        errorDiv.classList.remove('hidden');
+        return;
+    }
 
-    if (school.email === username && school.password === password) {
-      currentSchool = school;
-      currentUser = { type: 'admin', name: school.adminName };
-      cloudStorage.setSchoolId('MAIN');
-      await loadSchoolData();
-      showApp();
-    } else {
-      errorDiv.textContent = 'Invalid credentials'; errorDiv.classList.remove('hidden');
+    if (!supabaseClient) {
+        errorDiv.textContent =
+            'Supabase is not configured. Please reload the portal or check its configuration.';
+        errorDiv.classList.remove('hidden');
+        return;
     }
-  } else if (userType === 'formmaster') {
-    errorDiv.textContent = 'Form Master sign-in requires Supabase authentication.';
-    errorDiv.classList.remove('hidden');
-  } else if (userType === 'subadmin') {
-    var subUsername = document.getElementById('subadminUsername').value.trim();
-    var subPassword = document.getElementById('subadminPassword').value;
-    currentSchool = school;
-    cloudStorage.setSchoolId('MAIN');
-    await loadSchoolData();
-    var subadmin = subAdministrators.find(function(a) { return a.username === subUsername && a.password === subPassword; });
-    if (!subadmin || subadmin.status !== 'Active') {
-      errorDiv.textContent = subadmin ? 'This account is ' + subadmin.status.toLowerCase() + '. Contact the main administrator.' : 'Invalid username or password';
-      errorDiv.classList.remove('hidden'); return;
+
+    if (loginButton) {
+        loginButton.disabled = true;
+        loginButton.textContent = 'Signing in...';
     }
-    currentUser = { type: 'subadmin', id: subadmin.id, name: subadmin.fullName, permissions: subadmin.permissions || {} };
-    logActivity('Sub-administrator login', subadmin.fullName, '');
-    showApp();
-  } else if (userType === 'developer') {
-    var developerEmail = document.getElementById('developerEmail').value.trim();
-    var developerPassword = document.getElementById('developerPassword').value;
-    if (!developerEmail || developerPassword.length < 6) { errorDiv.textContent = 'Enter a developer email and a password of at least 6 characters'; errorDiv.classList.remove('hidden'); return; }
-    var developerAccount = await cloudStorage.globalLoad('portal:developer');
-    if (!developerAccount) {
-      var setupAdminEmail = document.getElementById('developerSetupAdminEmail').value.trim();
-      var setupAdminPassword = document.getElementById('developerSetupAdminPassword').value;
-      if (setupAdminEmail !== school.email || setupAdminPassword !== school.password) { errorDiv.textContent = 'First-time developer setup must be authorized with the school administrator credentials'; errorDiv.classList.remove('hidden'); return; }
-      developerAccount = { email: developerEmail, password: developerPassword, name: 'Portal Developer' };
-      await cloudStorage.globalSave('portal:developer', developerAccount);
-      showToast('Developer account created on this browser', 'info');
+
+    try {
+        await handleSupabaseLogin(userType, errorDiv);
+    } catch (error) {
+        errorDiv.textContent =
+            error && error.message
+                ? error.message
+                : 'Sign-in failed. Please try again.';
+
+        errorDiv.classList.remove('hidden');
+    } finally {
+        if (loginButton) {
+            loginButton.disabled = false;
+            loginButton.textContent = 'Login';
+        }
     }
-    if (developerAccount.email !== developerEmail || developerAccount.password !== developerPassword) { errorDiv.textContent = 'Invalid developer credentials'; errorDiv.classList.remove('hidden'); return; }
-    currentSchool = school; currentUser = { type: 'developer', name: developerAccount.name || 'Portal Developer' };
-    cloudStorage.setSchoolId('MAIN'); await loadSchoolData(); showApp();
-  } else if (userType === 'student') {
-    var admission = document.getElementById('studentAdmission').value.trim();
-    var studentPassword = document.getElementById('studentPassword').value;
-    currentSchool = school;
-    cloudStorage.setSchoolId('MAIN');
-    await loadSchoolData();
-    var publishedStudent = students.find(function(s) { return s.admNo === admission && s.studentPassword && s.studentPassword === studentPassword && getStudentReleaseStage(s) > 0; });
-    if (!publishedStudent) { errorDiv.textContent = 'No published result found for these credentials'; errorDiv.classList.remove('hidden'); return; }
-    currentUser = { type: 'student', name: publishedStudent.studentName, admission: admission, studentPassword: studentPassword };
-    showApp();
-  } else {
-    errorDiv.textContent = 'Please select login type'; errorDiv.classList.remove('hidden');
-  }
 }
 
 async function handleLogout() {
@@ -1307,7 +1347,6 @@ async function handleLogout() {
   document.getElementById('developerLoginFields').classList.add('hidden');
   document.getElementById('subadminPassword').value = '';
   document.getElementById('developerPassword').value = '';
-  document.getElementById('developerSetupAdminPassword').value = '';
   document.getElementById('studentPassword').value = '';
   document.getElementById('studentNewPassword').value = '';
   document.getElementById('studentConfirmNewPassword').value = '';
@@ -2566,7 +2605,7 @@ function showApp() {
   } else if (currentUser.type === 'student') {
     tabs = ['studentResults', 'schoolIdCard'];
   } else if (currentUser.type === 'developer') {
-    tabs = ['developer', 'schoolIdCard'];
+    tabs = ['developerDashboard', 'developer', 'schoolIdCard'];
   } else if (currentUser.type === 'formmaster') {
     tabs = ['studentDatabase', 'input', 'view', 'schoolIdCard'];
   } else {
@@ -2579,7 +2618,7 @@ function showApp() {
     var btn = document.createElement('button');
     btn.className = 'tab';
     if (idx === 0) btn.classList.add('active');
-    var tabLabels = { profile: 'Admin Profile', teacherSignatures: "Teachers' Signature", management: 'Management Staff', staffDatabase: 'Staff Database', studentDatabase: 'Student Database', subjectRegistration: 'Subject Registration', passportRegistration: 'Student Passport Registration', userManagement: 'User Management', release: 'Release Results', studentResults: 'Student Results', portalContent: 'Portal Options', developer: 'Developer Console', schoolIdCard: 'School ID Card' };
+    var tabLabels = { profile: 'Admin Profile', teacherSignatures: "Teachers' Signature", management: 'Management Staff', staffDatabase: 'Staff Database', studentDatabase: 'Student Database', subjectRegistration: 'Subject Registration', passportRegistration: 'Student Passport Registration', userManagement: 'User Management', release: 'Release Results', studentResults: 'Student Results', portalContent: 'Portal Options', developerDashboard: 'Developer Dashboard', developer: 'Developer Console', schoolIdCard: 'School ID Card' };
     btn.textContent = tabLabels[tab] || tab.charAt(0).toUpperCase() + tab.slice(1);
     btn.addEventListener('click', function() {
       document.querySelectorAll('.tab').forEach(function(t) { t.classList.remove('active'); });
@@ -2659,10 +2698,32 @@ function updateTabScrollIndicators() {
 }
 
 function showTab(tabName) {
+  if (
+    tabName === 'developerDashboard' ||
+    tabName === 'developer'
+  ) {
+    var roles = authenticatedProfile &&
+      Array.isArray(authenticatedProfile.active_roles)
+      ? authenticatedProfile.active_roles
+      : [];
+
+    if (
+      !currentUser ||
+      currentUser.type !== 'developer' ||
+      currentUser.role !== 'portal_developer' ||
+      !authenticatedProfile ||
+      authenticatedProfile.is_active !== true ||
+      roles.indexOf('portal_developer') === -1
+    ) {
+      showToast('Developer access is not authorised.', 'error');
+      return;
+    }
+  }
+
   var requiredPermission = { input: 'enterResults', view: 'manageStudents', masters: 'manageTeachers', school: 'manageSchool', management: 'manageBoard', userManagement: 'createAdmins', release: 'publishResults', print: 'generateSheets' };
   if (currentUser && currentUser.type === 'subadmin' && (!requiredPermission[tabName] || (!hasSubAdminPermission(requiredPermission[tabName]) && !(tabName === 'input' && hasSubAdminPermission('editResults'))))) return;
   if (currentUser && currentUser.type === 'student' && tabName !== 'studentResults') return;
-  ['dashboard', 'arms', 'masters', 'school', 'profile', 'assessment', 'teacherSignatures', 'management', 'staffDatabase', 'studentDatabase', 'subjectRegistration', 'passportRegistration', 'input', 'compute', 'view', 'print', 'userManagement', 'release', 'studentResults', 'portalContent', 'developer', 'schoolIdCard'].forEach(function(t) {
+  ['dashboard', 'arms', 'masters', 'school', 'profile', 'assessment', 'teacherSignatures', 'management', 'staffDatabase', 'studentDatabase', 'subjectRegistration', 'passportRegistration', 'input', 'compute', 'view', 'print', 'userManagement', 'release', 'studentResults', 'portalContent', 'developerDashboard', 'developer', 'schoolIdCard'].forEach(function(t) {
     document.getElementById(t + 'Tab').classList.add('hidden');
   });
   document.getElementById(tabName + 'Tab').classList.remove('hidden');
@@ -2686,7 +2747,12 @@ function showTab(tabName) {
   else if (tabName === 'release') renderReleaseResults();
   else if (tabName === 'studentResults') renderStudentResults();
   else if (tabName === 'portalContent') renderPortalContentAdmin();
-  else if (tabName === 'developer') renderDeveloperConsole();
+  else if (tabName === 'developerDashboard') {
+    renderDeveloperDashboard();
+  }
+  else if (tabName === 'developer') {
+    renderDeveloperConsole();
+  }
   else if (tabName === 'schoolIdCard') renderSchoolIdCard();
 }
 
@@ -6183,16 +6249,172 @@ function renderPortalContentAdmin() {
   document.querySelectorAll('.content-remove').forEach(function(button) { button.addEventListener('click', async function() { var source = { news: portalNews, staff: schoolStaff, prefect: prefects, duty: dutyRoster }[button.dataset.kind]; if (!source) return; var filtered = source.filter(function(item) { return String(item.id) !== button.dataset.id; }); if (button.dataset.kind === 'news') portalNews = filtered; else if (button.dataset.kind === 'staff') schoolStaff = filtered; else if (button.dataset.kind === 'prefect') prefects = filtered; else dutyRoster = filtered; await saveAllData(); renderPortalContentAdmin(); }); });
 }
 
+async function renderDeveloperDashboard() {
+    var container = document.getElementById('developerDashboardTab');
+
+    var roles = authenticatedProfile &&
+        Array.isArray(authenticatedProfile.active_roles)
+        ? authenticatedProfile.active_roles
+        : [];
+
+    if (
+        !container ||
+        !currentUser ||
+        currentUser.type !== 'developer' ||
+        currentUser.role !== 'portal_developer' ||
+        !authenticatedProfile ||
+        authenticatedProfile.is_active !== true ||
+        roles.indexOf('portal_developer') === -1
+    ) {
+        if (container) container.innerHTML =
+            '<div class="card"><p>Developer access is not authorised.</p></div>';
+        return;
+    }
+
+    container.innerHTML =
+        '<div class="card">' +
+            '<h2>Developer Dashboard</h2>' +
+            '<p style="color:#666;margin-top:8px;">' +
+            'Overview of the school portal records available to your account.' +
+            '</p>' +
+            '<p style="margin-top:12px;">Loading dashboard statistics...</p>' +
+        '</div>';
+
+    try {
+        var results = await Promise.all([
+            supabaseClient
+                .from('schools')
+                .select('id', { count: 'exact', head: true }),
+
+            supabaseClient
+                .from('profiles')
+                .select('id', { count: 'exact', head: true }),
+
+            supabaseClient
+                .from('profiles')
+                .select('id', { count: 'exact', head: true })
+                .eq('is_active', true),
+
+            supabaseClient
+                .from('profiles')
+                .select('id', { count: 'exact', head: true })
+                .eq('role', 'administrator')
+        ]);
+
+        var labels = [
+            'Schools visible to your account',
+            'Profiles visible to your account',
+            'Active profiles visible to your account',
+            'Administrator profiles visible to your account'
+        ];
+
+        var errors = results.filter(function(result) {
+            return result.error;
+        });
+
+        var html =
+            '<div class="card">' +
+                '<h2>Developer Dashboard</h2>' +
+                '<p style="color:#666;margin:8px 0 18px;">' +
+                'Supabase-backed portal overview' +
+                '</p>' +
+                '<div class="grid grid-2">';
+
+        results.forEach(function(result, index) {
+            var value = result.error
+                ? 'Unavailable'
+                : String(result.count == null ? 0 : result.count);
+
+            html +=
+                '<div class="card" style="border:1px solid #e5e7eb;">' +
+                    '<p style="color:#666;font-size:13px;">' +
+                        escapeManagementText(labels[index]) +
+                    '</p>' +
+                    '<h2 style="margin-top:8px;">' +
+                        escapeManagementText(value) +
+                    '</h2>' +
+                '</div>';
+        });
+
+        html +=
+                '</div>' +
+                '<button type="button" class="btn btn-primary" ' +
+                    'id="openDeveloperConsoleBtn">' +
+                    'Open Developer Console' +
+                '</button>' +
+            '</div>';
+
+        if (errors.length) {
+            html +=
+                '<div class="alert alert-warning">' +
+                    'Some statistics could not be loaded. Check the database ' +
+                    'permissions and Row Level Security policies for this account. ' +
+                    'The dashboard does not bypass those restrictions.' +
+                '</div>';
+        }
+
+        container.innerHTML = html;
+
+        var openButton = document.getElementById(
+            'openDeveloperConsoleBtn'
+        );
+
+        if (openButton) {
+            openButton.addEventListener('click', function() {
+                document.querySelectorAll('#tabsContainer .tab')
+                    .forEach(function(button) {
+                        button.classList.toggle(
+                            'active',
+                            button.textContent.trim() === 'Developer Console'
+                        );
+                    });
+
+                showTab('developer');
+            });
+        }
+    } catch (error) {
+        container.innerHTML =
+            '<div class="card">' +
+                '<h2>Developer Dashboard</h2>' +
+                '<div class="alert alert-error">' +
+                    'Could not load dashboard statistics. ' +
+                    escapeManagementText(
+                        error && error.message
+                            ? error.message
+                            : 'Please try again.'
+                    ) +
+                '</div>' +
+            '</div>';
+    }
+}
+
 async function renderDeveloperConsole() {
-  if (!currentUser || currentUser.type !== 'developer' || !authenticatedProfile || authenticatedProfile.role !== 'portal_developer' || authenticatedProfile.is_active !== true) return;
+  var developerRoles = authenticatedProfile && Array.isArray(authenticatedProfile.active_roles)
+    ? authenticatedProfile.active_roles
+    : [];
+
+  if (
+    !currentUser ||
+    currentUser.type !== 'developer' ||
+    currentUser.role !== 'portal_developer' ||
+    !authenticatedProfile ||
+    authenticatedProfile.is_active !== true ||
+    developerRoles.indexOf('portal_developer') === -1
+  ) {
+    return;
+  }
   var account = await cloudStorage.globalLoad('portal:developer') || {};
+  if (Object.prototype.hasOwnProperty.call(account, 'password')) {
+    delete account.password;
+    await cloudStorage.globalSave('portal:developer', account);
+  }
   var expiry = portalSettings.licenseUntil ? new Date(portalSettings.licenseUntil).toLocaleDateString() : 'No expiry set';
   var schoolResult = await supabaseClient.from('schools').select('id,name').order('name');
   var schools = schoolResult.data || [];
   var schoolOptions = '<option value="">Select a school</option>' + schools.map(function(school) { return '<option value="' + escapeManagementText(school.id) + '">' + escapeManagementText(school.name) + '</option>'; }).join('');
   var schoolLoadMessage = schoolResult.error ? '<p class="alert alert-error">Could not load schools: ' + escapeManagementText(schoolResult.error.message || 'Supabase denied access to the schools list.') + '</p>' : '';
   var administratorCreationHtml = '<div class="card"><h3>Create School Administrator</h3><p style="color:#666;margin:8px 0 16px">Create an administrator account for a school. Passwords are sent securely to the Edge Function and are not saved by this page.</p>' + schoolLoadMessage + '<div class="grid grid-2"><div class="input-group"><label for="newAdminSchool">School *</label><select id="newAdminSchool" required>' + schoolOptions + '</select></div><div class="input-group"><label for="newAdminFullName">Full Name *</label><input id="newAdminFullName" type="text" autocomplete="name" required></div><div class="input-group"><label for="newAdminUsername">Username *</label><input id="newAdminUsername" type="text" autocomplete="username" required></div><div class="input-group"><label for="newAdminEmail">Email *</label><input id="newAdminEmail" type="email" autocomplete="email" required></div><div class="input-group"><label for="newAdminPhone">Phone</label><input id="newAdminPhone" type="tel" autocomplete="tel"></div><div class="input-group"><label for="newAdminPassword">Password *</label><input id="newAdminPassword" type="password" autocomplete="new-password" minlength="8" required></div><div class="input-group"><label for="newAdminConfirmPassword">Confirm Password *</label><input id="newAdminConfirmPassword" type="password" autocomplete="new-password" minlength="8" required></div></div><button class="btn btn-success" id="createSchoolAdministratorBtn"' + (schoolResult.error || schools.length === 0 ? ' disabled' : '') + '>Create Administrator</button><div id="createSchoolAdministratorStatus" role="status" aria-live="polite" style="margin-top:12px"></div></div>';
-  document.getElementById('developerTab').innerHTML = '<div class="card"><h2>Portal Developer Console</h2><p style="color:#666;margin:8px 0 16px">Developer access and subscription controls are stored in this browser. This standalone portal has no payment processor; record sales and grant access manually.</p><h3>Developer Contact Profile</h3><div class="grid grid-2"><div class="input-group"><label>Name</label><input id="devName" value="' + escapeManagementText(account.name || '') + '"></div><div class="input-group"><label>Email</label><input id="devEmail" type="email" value="' + escapeManagementText(account.email || '') + '"></div><div class="input-group"><label>WhatsApp number (international digits)</label><input id="devWhatsApp" value="' + escapeManagementText(account.whatsapp || '') + '"></div><div class="input-group"><label>Call number</label><input id="devPhone" value="' + escapeManagementText(account.phone || '') + '"></div><div class="input-group"><label>Passport</label><input id="devPhoto" type="file" accept="image/*"></div><div class="input-group"><label>Change developer password (optional)</label><input id="devPassword" type="password" minlength="6"></div></div><button class="btn btn-primary" id="saveDeveloperProfileBtn">Save Contact Profile</button></div>' + administratorCreationHtml +
+  document.getElementById('developerTab').innerHTML = '<div class="card"><h2>Portal Developer Console</h2><p style="color:#666;margin:8px 0 16px">Developer access and subscription controls are stored in this browser. This standalone portal has no payment processor; record sales and grant access manually.</p><h3>Developer Contact Profile</h3><div class="grid grid-2"><div class="input-group"><label>Name</label><input id="devName" value="' + escapeManagementText(account.name || '') + '"></div><div class="input-group"><label>Email</label><input id="devEmail" type="email" value="' + escapeManagementText(account.email || '') + '"></div><div class="input-group"><label>WhatsApp number (international digits)</label><input id="devWhatsApp" value="' + escapeManagementText(account.whatsapp || '') + '"></div><div class="input-group"><label>Call number</label><input id="devPhone" value="' + escapeManagementText(account.phone || '') + '"></div><div class="input-group"><label>Passport</label><input id="devPhoto" type="file" accept="image/*"></div></div><button class="btn btn-primary" id="saveDeveloperProfileBtn">Save Contact Profile</button></div>' + administratorCreationHtml +
     '<div class="card"><h3>Portal Access &amp; Time Sales</h3><p>Portal: <strong>' + (portalSettings.portalEnabled === false ? 'OFF' : 'ON') + '</strong> · Access expiry: <strong>' + expiry + '</strong></p><div class="input-group"><label>Sell / grant access for how many days?</label><input id="licenseDays" type="number" min="1" value="30"></div><div class="input-group"><label>Customer / recipient name</label><input id="licenseCustomer" placeholder="School admin or user"></div><button class="btn btn-success" id="grantLicenseBtn">Record Sale &amp; Extend Access</button> <button class="btn ' + (portalSettings.portalEnabled === false ? 'btn-success' : 'btn-danger') + '" id="togglePortalBtn">Turn Portal ' + (portalSettings.portalEnabled === false ? 'ON' : 'OFF') + '</button><div style="margin-top:16px"><h4>Sales history</h4>' + ((portalSettings.sales || []).slice().reverse().map(function(sale) { return '<p style="padding:6px;border-bottom:1px solid #eee">' + escapeManagementText(sale.customer) + ' — ' + escapeManagementText(sale.days) + ' days — ' + escapeManagementText(new Date(sale.date).toLocaleDateString()) + '</p>'; }).join('') || '<p>No sales recorded.</p>') + '</div></div>';
   var createAdministratorBtn = document.getElementById('createSchoolAdministratorBtn');
   createAdministratorBtn.addEventListener('click', async function() {
@@ -6259,7 +6481,7 @@ async function renderDeveloperConsole() {
     }
   });
 
-  document.getElementById('saveDeveloperProfileBtn').addEventListener('click', async function() { account.name = document.getElementById('devName').value.trim() || 'Portal Developer'; account.email = document.getElementById('devEmail').value.trim(); account.whatsapp = document.getElementById('devWhatsApp').value.trim(); account.phone = document.getElementById('devPhone').value.trim(); var password = document.getElementById('devPassword').value; if (password && password.length < 6) { showToast('Password must be at least 6 characters', 'error'); return; } if (password) account.password = password; var file = document.getElementById('devPhoto').files[0]; var save = async function(photo) { if (photo) account.photo = photo; await cloudStorage.globalSave('portal:developer', account); currentUser.name = account.name; document.getElementById('currentUserName').textContent = currentUser.name; showToast('Developer profile saved', 'success'); renderDeveloperConsole(); }; if (file) { if (file.type.indexOf('image/') !== 0) { showToast('Choose a valid image', 'error'); return; } var reader = new FileReader(); reader.onload = function(event) { save(event.target.result); }; reader.readAsDataURL(file); } else save(null); });
+  document.getElementById('saveDeveloperProfileBtn').addEventListener('click', async function() { account.name = document.getElementById('devName').value.trim() || 'Portal Developer'; account.email = document.getElementById('devEmail').value.trim(); account.whatsapp = document.getElementById('devWhatsApp').value.trim(); account.phone = document.getElementById('devPhone').value.trim();  var file = document.getElementById('devPhoto').files[0]; var save = async function(photo) { if (photo) account.photo = photo; await cloudStorage.globalSave('portal:developer', account); currentUser.name = account.name; document.getElementById('currentUserName').textContent = currentUser.name; showToast('Developer profile saved', 'success'); renderDeveloperConsole(); }; if (file) { if (file.type.indexOf('image/') !== 0) { showToast('Choose a valid image', 'error'); return; } var reader = new FileReader(); reader.onload = function(event) { save(event.target.result); }; reader.readAsDataURL(file); } else save(null); });
   document.getElementById('grantLicenseBtn').addEventListener('click', async function() { var days = parseInt(document.getElementById('licenseDays').value, 10), customer = document.getElementById('licenseCustomer').value.trim(); if (!days || days < 1 || !customer) { showToast('Enter recipient name and valid days', 'error'); return; } var start = Math.max(Date.now(), Number(portalSettings.licenseUntil) || 0); portalSettings.licenseUntil = start + days * 86400000; portalSettings.sales = portalSettings.sales || []; portalSettings.sales.push({ customer: customer, days: days, date: Date.now() }); await saveAllData(); showToast('Access extended for ' + days + ' days', 'success'); renderDeveloperConsole(); });
   document.getElementById('togglePortalBtn').addEventListener('click', async function() { portalSettings.portalEnabled = portalSettings.portalEnabled === false; await saveAllData(); showToast('Portal turned ' + (portalSettings.portalEnabled ? 'on' : 'off'), 'info'); renderDeveloperConsole(); });
 }
