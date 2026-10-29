@@ -978,7 +978,9 @@ async function handleSupabaseLogin(userType, errorDiv) {
   var emailInputId = userType === 'developer'
     ? 'developerEmail'
     : 'authEmail';
-  var email = (document.getElementById(emailInputId).value || '').trim();
+  var email = (
+    document.getElementById(emailInputId)?.value || ''
+  ).trim();
   var passwordInput = {
     admin: 'adminPassword', formmaster: 'armPassword', subjectteacher: 'assignmentPassword',
     subadmin: 'subadminPassword', student: 'studentPassword', developer: 'developerPassword'
