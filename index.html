@@ -3866,6 +3866,7 @@ if (studentDbState.view === 'replacementSubmissions') {
   workspace.innerHTML = html;
   workspace.querySelectorAll('.student-db-tab').forEach(function(button) { button.addEventListener('click', function() { studentDbState.view = button.dataset.view; renderStudentDatabaseWorkspace(); }); });
   bindOfficialStudentLoginEvents(workspace);
+  bindStudentHouseEvents(workspace);
   bindStudentDatabaseEvents(workspace);
   bindClassListReplacementEvents(workspace);
   bindExistingStudentEnrolmentEvents(workspace);
@@ -4125,6 +4126,76 @@ function renderOfficialStudentRows(isAdmin, query) {
     '<tr><td colspan="10" style="color:#777">' +
     'No official students enrolled in this class for the active session.' +
     '</td></tr>';
+}
+
+function bindStudentHouseEvents(root) {
+  if (!root || !currentUser || currentUser.type !== 'admin') {
+    return;
+  }
+
+  root.querySelectorAll(
+    'tr[data-official-student-id]'
+  ).forEach(function(row) {
+    var button = row.querySelector('.student-house-save');
+
+    if (!button || button.dataset.bound === 'true') {
+      return;
+    }
+
+    button.dataset.bound = 'true';
+
+    button.addEventListener('click', async function() {
+      var studentId = row.getAttribute('data-official-student-id');
+      var select = row.querySelector('.student-house-select');
+      var status = row.querySelector('.student-house-status');
+
+      if (!select) return;
+
+      button.disabled = true;
+
+      if (status) status.textContent = 'Saving...';
+
+      try {
+        var result = await supabaseClient.rpc(
+          'set_student_house',
+          {
+            p_student_id: studentId,
+            p_house: select.value || null
+          }
+        );
+
+        if (result.error) {
+          throw result.error;
+        }
+
+        var item = (studentDbState.official || []).find(
+          function(entry) {
+            return String(
+              entry.student && entry.student.id
+            ) === String(studentId);
+          }
+        );
+
+        if (item && item.student) {
+          item.student.student_house = select.value || null;
+        }
+
+        if (status) status.textContent = 'Saved successfully.';
+      } catch (error) {
+        console.error('Student house save failed:', error);
+
+        if (status) {
+          status.textContent =
+            'Save failed: ' +
+            (error && error.message
+              ? error.message
+              : 'Please try again.');
+        }
+      } finally {
+        button.disabled = false;
+      }
+    });
+  });
 }
 
 function renderOfficialStudentLoginAction(item) {
