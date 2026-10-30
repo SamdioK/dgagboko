@@ -3866,7 +3866,9 @@ if (studentDbState.view === 'replacementSubmissions') {
   workspace.innerHTML = html;
   workspace.querySelectorAll('.student-db-tab').forEach(function(button) { button.addEventListener('click', function() { studentDbState.view = button.dataset.view; renderStudentDatabaseWorkspace(); }); });
   bindOfficialStudentLoginEvents(workspace);
+  bindOfficialStudentProfileExportEvents(workspace);
   bindStudentHouseEvents(workspace);
+  bindOfficialStudentListToggle(workspace);
   bindStudentDatabaseEvents(workspace);
   bindClassListReplacementEvents(workspace);
   bindExistingStudentEnrolmentEvents(workspace);
@@ -4016,21 +4018,34 @@ function renderOfficialStudentCatalogue(isAdmin) {
   function renderOfficialDetails() {
     if (!studentDbState.activeClassId || studentDbState.officialPanelClosed) return '';
     var className = studentDbClassLabel(studentDbState.activeClassId);
-    var details = studentDbState.officialPanelMinimized ? '' : '<div class="student-class-details-body"><div class="input-group" style="margin:12px 0"><label for="studentDbSearch">Search Student (SID or name)</label><input id="studentDbSearch" type="search" placeholder="Search by SID or student name"></div>' +
-      '<div style="overflow-x:auto"><table><thead><tr>' +
-      '<th>S/N</th>' +
-      '<th>SID (Internal)</th>' +
-      '<th>Admission Number</th>' +
-      '<th>Student Name</th>' +
-      '<th>Gender</th>' +
-      '<th>Date of Birth</th>' +
-      '<th>Guardian</th>' +
-      '<th>Status</th>' +
-      '<th>Student House</th>' +
-      (isAdmin ? '<th>Login Account</th>' : '<th>Action</th>') +
-      '</tr></thead><tbody id="studentDbOfficialRows">' +
-      renderOfficialStudentRows(isAdmin, '') +
-      '</tbody></table></div></div>';
+    var details = studentDbState.officialPanelMinimized ? '' :
+      '<div class="student-class-details-body">' +
+        '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:12px 0">' +
+          '<button type="button" class="btn btn-primary student-profile-list-toggle" aria-expanded="false">View List</button>' +
+          '<button type="button" class="btn btn-primary student-profile-print">Print Student Profiles</button>' +
+          '<button type="button" class="btn btn-primary student-profile-export">Export Student Profiles to Excel (CSV)</button>' +
+        '</div>' +
+        '<div class="student-profile-list" hidden>' +
+          '<div class="input-group" style="margin:12px 0">' +
+            '<label for="studentDbSearch">Search Student (SID, admission number or name)</label>' +
+            '<input id="studentDbSearch" type="search" placeholder="Search by SID, admission number or student name">' +
+          '</div>' +
+          '<div style="overflow-x:auto"><table><thead><tr>' +
+            '<th>S/N</th>' +
+            '<th>SID (Internal)</th>' +
+            '<th>Admission Number</th>' +
+            '<th>Student Name</th>' +
+            '<th>Gender</th>' +
+            '<th>Date of Birth</th>' +
+            '<th>Guardian</th>' +
+            '<th>Status</th>' +
+            '<th>Student House</th>' +
+            (isAdmin ? '<th>Login Account</th>' : '<th>Action</th>') +
+          '</tr></thead><tbody id="studentDbOfficialRows">' +
+            renderOfficialStudentRows(isAdmin, '') +
+          '</tbody></table></div>' +
+        '</div>' +
+      '</div>';
     return '<div class="student-class-details" style="grid-column:1/-1;margin-top:14px;padding:14px;border:1px solid #d9e1f2;border-radius:10px;background:#fff"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><h3>' + escapeManagementText(className) + ' — Official Students</h3><div><button type="button" class="btn btn-primary student-db-minimize-details">' + (studentDbState.officialPanelMinimized ? 'Expand' : 'Minimize') + '</button> <button type="button" class="btn btn-danger student-db-close-details">Close</button></div></div>' + details + '</div>';
   }
   function renderLevel(level) {
@@ -4055,6 +4070,28 @@ function renderOfficialStudentCatalogue(isAdmin) {
     return '<button type="button" class="student-class-arm' + (selected ? ' selected' : '') + '" data-student-class-id="' + escapeManagementText(item.id) + '" aria-pressed="' + selected + '" aria-label="Select ' + escapeManagementText(item.class_name) + '">' + escapeManagementText(item.class_name) + '</button>';
   }).join('') + '</div>' + (otherClasses.some(function(item) { return String(item.id) === String(studentDbState.activeClassId); }) ? renderOfficialDetails() : '') + '</section>' : '';
   return '<div class="input-group student-class-picker"><label for="studentDbClass">Class Arm</label><select id="studentDbClass" class="student-class-native-select" aria-label="Select class arm">' + options + '</select><div class="student-class-picker-groups"><div class="student-class-picker-group basic">' + levelSections.basic.join('') + '</div><div class="student-class-picker-group senior">' + levelSections.senior.join('') + '</div></div>' + otherHtml + '</div>';
+}
+
+function bindOfficialStudentListToggle(root) {
+  if (!root) return;
+
+  root.querySelectorAll('.student-profile-list-toggle').forEach(function(button) {
+    if (button.dataset.bound === 'true') return;
+    button.dataset.bound = 'true';
+
+    button.addEventListener('click', function() {
+      var details = button.closest('.student-class-details');
+      if (!details) return;
+
+      var list = details.querySelector('.student-profile-list');
+      if (!list) return;
+
+      var isHidden = list.hidden;
+      list.hidden = !isHidden;
+      button.textContent = isHidden ? 'Hide List' : 'View List';
+      button.setAttribute('aria-expanded', String(isHidden));
+    });
+  });
 }
 
 function renderStudentHouseField(student) {
@@ -4126,6 +4163,178 @@ function renderOfficialStudentRows(isAdmin, query) {
     '<tr><td colspan="10" style="color:#777">' +
     'No official students enrolled in this class for the active session.' +
     '</td></tr>';
+}
+
+function getOfficialStudentProfileExportRows() {
+  return (studentDbState.official || []).map(function(item, index) {
+    var student = item.student || {};
+    var enrolment = item.enrolment || {};
+
+    return [
+      index + 1,
+      enrolment.sid || '',
+      student.admission_number || '',
+      studentDbName(student) || '',
+      student.gender || '',
+      studentDbDate(student.date_of_birth) || '',
+      student.guardian_name || '',
+      student.guardian_phone || '',
+      student.status || '',
+      student.student_house || 'Not assigned'
+    ];
+  });
+}
+
+function getOfficialStudentProfileExportHeaders() {
+  return [
+    'S/N',
+    'SID (Internal)',
+    'Admission Number',
+    'Student Name',
+    'Gender',
+    'Date of Birth',
+    'Guardian Name',
+    'Guardian Phone',
+    'Status',
+    'Student House'
+  ];
+}
+
+function exportOfficialStudentProfilesToExcel() {
+  var rows = getOfficialStudentProfileExportRows();
+  var headers = getOfficialStudentProfileExportHeaders();
+
+  if (!rows.length) {
+    alert('There are no official student records to export for this class.');
+    return;
+  }
+
+  function csvCell(value) {
+    var text = String(value == null ? '' : value);
+
+    // Prevent spreadsheet formula execution for text values.
+    if (/^[\s]*[=+\-@]/.test(text)) {
+      text = "'" + text;
+    }
+
+    return '"' + text.replace(/"/g, '""') + '"';
+  }
+
+  var csv = '\uFEFF' + [headers].concat(rows).map(function(row) {
+    return row.map(csvCell).join(',');
+  }).join('\r\n');
+
+  var blob = new Blob([csv], {
+    type: 'text/csv;charset=utf-8;'
+  });
+
+  var url = URL.createObjectURL(blob);
+  var link = document.createElement('a');
+  var className = String(
+    studentDbClassLabel(studentDbState.activeClassId) || 'Student_Profiles'
+  );
+
+  var safeClassName = className
+    .replace(/[^a-z0-9_-]+/gi, '_')
+    .replace(/^_+|_+$/g, '') || 'Student_Profiles';
+
+  link.href = url;
+  link.download = safeClassName + '_Official_Student_Profiles.csv';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+
+  setTimeout(function() {
+    URL.revokeObjectURL(url);
+  }, 1000);
+}
+
+function printOfficialStudentProfiles() {
+  var rows = getOfficialStudentProfileExportRows();
+  var headers = getOfficialStudentProfileExportHeaders();
+
+  if (!rows.length) {
+    alert('There are no official student records to print for this class.');
+    return;
+  }
+
+  var className = String(
+    studentDbClassLabel(studentDbState.activeClassId) || 'Official Students'
+  );
+
+  function htmlCell(value) {
+    return escapeManagementText(String(value == null ? '' : value));
+  }
+
+  var tableHead = '<thead><tr>' + headers.map(function(header) {
+    return '<th>' + htmlCell(header) + '</th>';
+  }).join('') + '</tr></thead>';
+
+  var tableBody = '<tbody>' + rows.map(function(row) {
+    return '<tr>' + row.map(function(value) {
+      return '<td>' + htmlCell(value) + '</td>';
+    }).join('') + '</tr>';
+  }).join('') + '</tbody>';
+
+  var printWindow = window.open('', '_blank');
+
+  if (!printWindow) {
+    alert('The print window was blocked. Please allow pop-ups for this site and try again.');
+    return;
+  }
+
+  var documentHtml = '<!DOCTYPE html><html><head><meta charset="UTF-8">' +
+    '<title>Official Student Profiles - ' + htmlCell(className) + '</title>' +
+    '<style>' +
+    '@page{size:A4 landscape;margin:7mm}' +
+    '*{box-sizing:border-box}' +
+    'body{font-family:"Times New Roman",Times,serif;font-size:12pt;color:#000;margin:0;line-height:1.05}' +
+    'h1,h2,p{text-align:center;margin:3px 0;font-family:"Times New Roman",Times,serif}' +
+    'h1{font-size:16pt;font-weight:bold}' +
+    'h2{font-size:14pt;font-weight:bold}' +
+    'p{font-size:12pt;margin-bottom:8px}' +
+    'table{width:100%;border-collapse:collapse;table-layout:fixed;font-family:"Times New Roman",Times,serif;font-size:12pt;line-height:1.05}' +
+    'th,td{border:1px solid #333;padding:3px 4px;text-align:left;vertical-align:middle;overflow-wrap:anywhere;font-size:12pt;font-family:"Times New Roman",Times,serif}' +
+    'th{font-weight:bold;background:#eee}' +
+    'thead{display:table-header-group}' +
+    'tfoot{display:table-footer-group}' +
+    'tr{break-inside:avoid;page-break-inside:avoid}' +
+    '@media print{body{margin:0}table{page-break-after:auto}}' +
+    '</style></head><body>' +
+    '<h1>DE-GLOBAL ACADEMY, GBOKO</h1>' +
+    '<h2>OFFICIAL STUDENT REGISTER</h2>' +
+    '<p>Class Arm: ' + htmlCell(className) +
+    ' &nbsp; | &nbsp; Total Students: ' + rows.length + '</p>' +
+    '<table>' + tableHead + tableBody + '</table>' +
+    '<script>window.onload=function(){window.print();};<\/script>' +
+    '</body></html>';
+
+  printWindow.document.open();
+  printWindow.document.write(documentHtml);
+  printWindow.document.close();
+}
+
+function bindOfficialStudentProfileExportEvents(root) {
+  if (!root) return;
+
+  var printButton = root.querySelector('.student-profile-print');
+  var exportButton = root.querySelector('.student-profile-export');
+
+  if (printButton && printButton.dataset.bound !== 'true') {
+    printButton.dataset.bound = 'true';
+
+    printButton.addEventListener('click', function() {
+      printOfficialStudentProfiles();
+    });
+  }
+
+  if (exportButton && exportButton.dataset.bound !== 'true') {
+    exportButton.dataset.bound = 'true';
+
+    exportButton.addEventListener('click', function() {
+      exportOfficialStudentProfilesToExcel();
+    });
+  }
 }
 
 function bindStudentHouseEvents(root) {
