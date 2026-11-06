@@ -7202,10 +7202,46 @@ function renderDashboard() {
   html += '<button class="btn btn-primary" onclick="showTab(\'masters\'); document.querySelectorAll(\'.tab\').forEach(function(t){t.classList.remove(\'active\'); if(t.textContent===\'Masters\')t.classList.add(\'active\');});" style="padding: 10px 20px;">Manage Subject Teachers</button></div>';
 
   if (currentUser && currentUser.type === 'admin') {
-    html += '<div class="card" style="margin-top:20px;border-left:4px solid #667eea;"><h3>Supabase Migration Readiness</h3><p style="color:#666;">Run a read-only check of this administrator account, its linked school and the school class records. This check does not modify any data.</p><button type="button" class="btn btn-primary" id="runSupabaseSchoolAuditBtn">Run Read-only School &amp; Class Audit</button><div id="supabaseSchoolAuditResult" style="margin-top:14px;"></div></div>';
+    html += '<div class="card" style="margin-top:20px;border-left:4px solid #667eea;"><h3>Supabase Migration Readiness</h3><p style="color:#666;">Run read-only checks of the linked school, classes and school data counts. No records are changed or downloaded by the count audit.</p><button type="button" class="btn btn-primary" id="runSupabaseSchoolAuditBtn">Run Read-only School &amp; Class Audit</button><div id="supabaseSchoolAuditResult" style="margin-top:14px;"></div><hr style="margin:18px 0;"><button type="button" class="btn btn-primary" id="runSupabaseDataCountAuditBtn">Run Read-only School Data Inventory</button><div id="supabaseDataCountAuditResult" style="margin-top:14px;"></div></div>';
   }
 
   document.getElementById('dashboardTab').innerHTML = html;
+  var dataCountButton = document.getElementById('runSupabaseDataCountAuditBtn');
+  if (dataCountButton) {
+    dataCountButton.addEventListener('click', async function() {
+      var output = document.getElementById('supabaseDataCountAuditResult');
+      dataCountButton.disabled = true;
+      dataCountButton.textContent = 'Checking school data counts...';
+      output.textContent = 'Checking exact row counts through your authenticated Supabase session. No personal records are being downloaded or changed.';
+      try {
+        if (!supabasePersistence || typeof supabasePersistence.auditSchoolDataCounts !== 'function') {
+          throw new Error('The data inventory audit is not available. Reload the portal and sign in again.');
+        }
+        var report = await supabasePersistence.auditSchoolDataCounts();
+        var safe = function(value) {
+          return String(value == null ? '' : value).replace(/[&<>"']/g, function(ch) {
+            return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch];
+          });
+        };
+        var rows = report.checks.map(function(item) {
+          var result = item.status === 'ok'
+            ? '<strong>' + safe(item.count) + '</strong>'
+            : '<span style="color:#b42318;">Not readable: ' + safe(item.message) + '</span>';
+          return '<tr><td>' + safe(item.label) + '</td><td>' + result + '</td></tr>';
+        }).join('');
+        var colour = report.failedChecks === 0 ? '#eef8f0' : '#fff7e6';
+        output.innerHTML = '<div style="background:' + colour + ';padding:12px;border-radius:8px;"><strong>Read-only data inventory completed.</strong><p>Successful checks: ' + safe(report.successfulChecks) + ' of ' + safe(report.checks.length) + '</p><p>Checks requiring RLS/schema review: ' + safe(report.failedChecks) + '</p><p>No records were inserted, updated or deleted.</p></div>' +
+          '<div style="overflow-x:auto;margin-top:12px;"><table><thead><tr><th>Data category</th><th>Visible row count / result</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+        window.lastSupabaseDataCountAuditReport = report;
+      } catch (auditError) {
+        output.innerHTML = '<div style="background:#fff0f0;color:#9b1c1c;padding:12px;border-radius:8px;"><strong>Data inventory could not be completed.</strong><p>' + safeAuditMessage(auditError) + '</p></div>';
+      } finally {
+        dataCountButton.disabled = false;
+        dataCountButton.textContent = 'Run Read-only School Data Inventory';
+      }
+    });
+  }
+
   var auditButton = document.getElementById('runSupabaseSchoolAuditBtn');
   if (auditButton) {
     auditButton.addEventListener('click', async function() {
