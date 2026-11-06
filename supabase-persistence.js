@@ -103,7 +103,56 @@
       return data || [];
     }
 
-    return Object.freeze({ select, insert, update, upsert, remove });
+    async function auditSchoolAndClasses() {
+      const user = await requireAuthenticatedUser();
+      const profileResult = await client.from('profiles')
+        .select('id,school_id,role,is_active')
+        .eq('id', user.id)
+        .maybeSingle();
+      if (profileResult.error) throw profileResult.error;
+      const profile = profileResult.data;
+      if (!profile || profile.is_active !== true || !profile.school_id) {
+        throw new Error('An active school-linked profile is required for this audit.');
+      }
+
+      const schoolResult = await client.from('schools')
+        .select('id,name,address,phone,email,logo_url,motto')
+        .eq('id', profile.school_id)
+        .maybeSingle();
+      if (schoolResult.error) throw schoolResult.error;
+      if (!schoolResult.data) {
+        throw new Error('The authenticated profile school is not visible in schools. Check its record and SELECT RLS policy.');
+      }
+
+      const classesResult = await client.from('classes')
+        .select('id,school_id,level,arm,class_name,created_at')
+        .eq('school_id', profile.school_id)
+        .order('class_name', { ascending: true });
+      if (classesResult.error) throw classesResult.error;
+
+      const rows = classesResult.data || [];
+      const seen = new Set();
+      const duplicates = [];
+      rows.forEach(function(row) {
+        const key = String(row.class_name || '').trim().toLowerCase();
+        if (seen.has(key)) duplicates.push(row.class_name);
+        seen.add(key);
+      });
+
+      return {
+        readOnly: true,
+        userId: user.id,
+        profileId: profile.id,
+        schoolId: profile.school_id,
+        role: profile.role,
+        school: schoolResult.data,
+        classCount: rows.length,
+        classes: rows,
+        duplicateClassNames: duplicates
+      };
+    }
+
+    return Object.freeze({ select, insert, update, upsert, remove, auditSchoolAndClasses });
   }
 
   global.SupabasePersistence = Object.freeze({ create });
