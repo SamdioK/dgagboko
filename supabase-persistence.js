@@ -209,7 +209,7 @@
       const [staffResult, termsResult, sessionsResult, classesResult, configurationsResult] = await Promise.all([
         client.from('school_staff_directory').select('id,school_id,profile_id,staff_id').eq('school_id', profile.school_id),
         client.from('terms').select('id,school_id,name,term_number,is_current').eq('school_id', profile.school_id).order('term_number'),
-        client.from('academic_sessions').select('id,school_id').eq('school_id', profile.school_id),
+        client.from('academic_sessions').select('id,school_id,name,is_current').eq('school_id', profile.school_id).order('created_at'),
         client.from('classes').select('id,school_id,level,class_name').eq('school_id', profile.school_id),
         client.from('assessment_configurations').select('id,school_id,academic_session_id,term_id,class_level,is_active').eq('school_id', profile.school_id)
       ]);
@@ -228,6 +228,9 @@
       const staffIds = staff.map(row => row.staff_id).filter(value => value != null && String(value).trim() !== '');
       const profileIds = staff.map(row => row.profile_id).filter(Boolean);
       const currentTerms = terms.filter(row => row.is_current === true).length;
+      const targetSessions = sessions.filter(row => /2026\s*[-/]\s*2027|2026\s*\/\s*2027|2026-2027/i.test(String(row.name || '')));
+      const targetSessionIds = new Set(targetSessions.map(row => row.id));
+      const firstTermCandidates = terms.filter(row => Number(row.term_number) === 1 || /^first\s*term$/i.test(String(row.name || '').trim()));
       const sessionIds = new Set(sessions.map(row => row.id));
       const termIds = new Set(terms.map(row => row.id));
       const classLevels = new Set(classes.map(row => String(row.level || row.class_name || '').trim().toLowerCase()));
@@ -250,8 +253,16 @@
           duplicateProfileLinks: duplicateCount(staff, row => row.profile_id || ''),
           linkedProfileCount: profileIds.length
         },
+        sessions: {
+          total: sessions.length,
+          records: sessions.map(row => ({ id: row.id, name: row.name, isCurrent: row.is_current === true })),
+          target2026_2027: targetSessions.map(row => ({ id: row.id, name: row.name, isCurrent: row.is_current === true }))
+        },
         terms: {
           total: terms.length, currentTermCount: currentTerms,
+          firstTermCandidates: firstTermCandidates.map(row => ({ id: row.id, name: row.name, termNumber: row.term_number, isCurrent: row.is_current === true })),
+          targetSessionAssessmentCount: configurations.filter(row => targetSessionIds.has(row.academic_session_id)).length,
+          targetSessionTermConfigurationCount: configurations.filter(row => targetSessionIds.has(row.academic_session_id) && firstTermCandidates.some(term => term.id === row.term_id)).length,
           duplicateTermNumbers: duplicateCount(terms, row => row.term_number == null ? '' : String(row.term_number)),
           termNumbers: terms.map(row => ({ termNumber: row.term_number, isCurrent: row.is_current === true }))
         },
