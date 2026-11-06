@@ -79,3 +79,47 @@ All 30 supplied public tables were reported to have RLS enabled. RLS being enabl
 5. Migrate students only through the existing import/approval workflow.
 6. Add and secure any genuinely missing tables before moving news, prefects, rosters, portal settings, audit records or user preferences.
 7. Remove browser fallback only after every category has passed reconciliation and multi-role testing.
+
+## Staff directory migration — implementation status (2026-11-06)
+
+The staff directory write policies and table constraints were reviewed before enabling the administrator interface.
+
+### Verified controls
+
+- INSERT, SELECT and UPDATE are restricted to an active administrator profile belonging to the same school.
+- No DELETE policy was supplied; the browser interface must not offer staff deletion.
+- school_id references schools; profile_id and created_by reference profiles.
+- Staff status is constrained to Active, Inactive or Suspended.
+- A non-empty staff ID is unique per school after trimming and case folding. Blank staff IDs remain permitted.
+- A non-empty email is unique per school after trimming and case folding.
+- A profile can be linked to only one staff-directory row per school.
+
+### Implemented on the migration branch
+
+- Added authenticated getStaffDirectory, createStaffDirectoryRecord and updateStaffDirectoryRecord methods in supabase-persistence.js.
+- Connected the administrator Staff Database screen to read existing rows from school_staff_directory.
+- Staff create and edit actions now use Supabase and return the saved row before updating the interface.
+- Status activation/deactivation uses the scoped Supabase update path.
+- Removed the Staff Database array from the legacy saveAllData() browser-storage write list.
+- The interface does not synthesise legacy Form Master, management or school-staff records into the Supabase staff directory.
+- Staff IDs are optional and are not generated automatically.
+- Existing profile links are not overwritten during edits.
+- Qualification selections are stored as a semicolon-separated text value in the existing qualification column and reconstructed for the form.
+
+### Deliberately deferred
+
+- Staff photo uploads are not yet connected. The Storage bucket policies and upload constraints have not been verified. Selecting a new photo is therefore blocked with an explanatory message; existing photo_url values can still be displayed.
+- Per-field portal visibility selections are not migrated. The current show_on_portal boolean is supported, but the legacy per-field selection data requires a separate schema and access review.
+- No legacy staff arrays are bulk imported or reconciled automatically.
+- No database schema or RLS policy was changed as part of this implementation.
+
+### Required validation before wider use
+
+1. Open the preview branch after its deployment succeeds and sign in as the school administrator.
+2. Confirm that the existing 15 Supabase staff rows load; do not create test duplicates among real staff.
+3. Use a clearly identifiable test record only if the school administrator authorises a test record. Confirm insert, read-back, edit and status change.
+4. Confirm that blank staff IDs remain blank and that duplicate non-empty IDs/emails are rejected by the database.
+5. Test with a non-administrator account and confirm the directory is not accessible through the administrator screen.
+6. Confirm the public portal's staff display and field-selection behaviour separately before retiring its legacy data path.
+
+The preview and live repositories share the same Supabase project. Any staff write made from the preview portal is a real write to the shared school database.
