@@ -7201,7 +7201,48 @@ function renderDashboard() {
   }
   html += '<button class="btn btn-primary" onclick="showTab(\'masters\'); document.querySelectorAll(\'.tab\').forEach(function(t){t.classList.remove(\'active\'); if(t.textContent===\'Masters\')t.classList.add(\'active\');});" style="padding: 10px 20px;">Manage Subject Teachers</button></div>';
 
+  if (currentUser && currentUser.type === 'admin') {
+    html += '<div class="card" style="margin-top:20px;border-left:4px solid #667eea;"><h3>Supabase Migration Readiness</h3><p style="color:#666;">Run a read-only check of this administrator account, its linked school and the school class records. This check does not modify any data.</p><button type="button" class="btn btn-primary" id="runSupabaseSchoolAuditBtn">Run Read-only School &amp; Class Audit</button><div id="supabaseSchoolAuditResult" style="margin-top:14px;"></div></div>';
+  }
+
   document.getElementById('dashboardTab').innerHTML = html;
+  var auditButton = document.getElementById('runSupabaseSchoolAuditBtn');
+  if (auditButton) {
+    auditButton.addEventListener('click', async function() {
+      var output = document.getElementById('supabaseSchoolAuditResult');
+      auditButton.disabled = true;
+      auditButton.textContent = 'Checking Supabase...';
+      output.textContent = 'Reading authenticated profile, school and class records. No data will be changed.';
+      try {
+        if (!supabasePersistence || typeof supabasePersistence.auditSchoolAndClasses !== 'function') {
+          throw new Error('Supabase persistence audit is not available. Reload the portal and sign in again.');
+        }
+        var report = await supabasePersistence.auditSchoolAndClasses();
+        var safe = function(value) {
+          return String(value == null ? '' : value).replace(/[&<>"']/g, function(ch) {
+            return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch];
+          });
+        };
+        var rows = report.classes.map(function(item) {
+          return '<tr><td>' + safe(item.class_name) + '</td><td>' + safe(item.level) + '</td><td>' + safe(item.arm) + '</td><td>' + safe(item.id) + '</td></tr>';
+        }).join('');
+        output.innerHTML = '<div style="background:#eef8f0;padding:12px;border-radius:8px;"><strong>Read-only audit completed.</strong><p>School: ' + safe(report.school.name) + '</p><p>School UUID: ' + safe(report.schoolId) + '</p><p>Profile UUID: ' + safe(report.profileId) + '</p><p>Classes visible: ' + safe(report.classCount) + '</p><p>Duplicate class names: ' + safe(report.duplicateClassNames.length) + '</p></div>' +
+          '<div style="overflow-x:auto;margin-top:12px;"><table><thead><tr><th>Class name</th><th>Level</th><th>Arm</th><th>Class UUID</th></tr></thead><tbody>' + (rows || '<tr><td colspan="4">No class records were returned for this school.</td></tr>') + '</tbody></table></div>';
+        window.lastSupabaseSchoolAuditReport = report;
+      } catch (auditError) {
+        output.innerHTML = '<div style="background:#fff0f0;color:#9b1c1c;padding:12px;border-radius:8px;"><strong>Audit could not be completed.</strong><p>' + safeAuditMessage(auditError) + '</p></div>';
+      } finally {
+        auditButton.disabled = false;
+        auditButton.textContent = 'Run Read-only School &amp; Class Audit';
+      }
+    });
+  }
+}
+
+function safeAuditMessage(error) {
+  return String(error && error.message || 'Unknown audit error').replace(/[&<>"']/g, function(ch) {
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch];
+  });
 }
 
 window.showActivationPanel = function() {
