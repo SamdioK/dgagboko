@@ -293,7 +293,58 @@
       };
     }
 
-    return Object.freeze({ select, insert, update, upsert, remove, auditSchoolAndClasses, auditSchoolDataCounts, auditStudentEnrolmentIntegrity, auditAssignmentIntegrity, auditStaffAndAcademicConfiguration });
+
+    async function getStaffDirectory() {
+      const user = await requireAuthenticatedUser();
+      const profile = await getActiveSchoolProfile(user);
+      const { data, error } = await client.from('school_staff_directory')
+        .select('id,school_id,profile_id,staff_id,full_name,gender,designation,department,qualification,specialisation,employment_type,phone,email,biography,photo_url,date_employed,status,show_on_portal,created_at,updated_at')
+        .eq('school_id', profile.school_id).order('full_name', { ascending: true });
+      if (error) throw error;
+      return data || [];
+    }
+
+    function normaliseStaffRecord(record) {
+      const source = record || {};
+      const allowed = ['staff_id','full_name','gender','designation','department','qualification','specialisation','employment_type','phone','email','biography','photo_url','date_employed','status','show_on_portal'];
+      const result = {};
+      allowed.forEach(key => {
+        if (Object.prototype.hasOwnProperty.call(source, key)) result[key] = source[key];
+      });
+      if (result.staff_id != null && String(result.staff_id).trim() === '') result.staff_id = null;
+      if (result.email != null && String(result.email).trim() === '') result.email = null;
+      if (result.status != null && !['Active','Inactive','Suspended'].includes(result.status)) throw new Error('Invalid staff status.');
+      if (!result.full_name || !String(result.full_name).trim()) throw new Error('Staff full name is required.');
+      result.full_name = String(result.full_name).trim();
+      return result;
+    }
+
+    async function createStaffDirectoryRecord(record) {
+      const user = await requireAuthenticatedUser();
+      const profile = await getActiveSchoolProfile(user);
+      const payload = normaliseStaffRecord(record);
+      payload.school_id = profile.school_id;
+      payload.created_by = user.id;
+      const { data, error } = await client.from('school_staff_directory').insert(payload)
+        .select('id,school_id,profile_id,staff_id,full_name,gender,designation,department,qualification,specialisation,employment_type,phone,email,biography,photo_url,date_employed,status,show_on_portal,created_at,updated_at').single();
+      if (error) throw error;
+      return data;
+    }
+
+    async function updateStaffDirectoryRecord(id, record) {
+      const user = await requireAuthenticatedUser();
+      const profile = await getActiveSchoolProfile(user);
+      if (!id || typeof id !== 'string') throw new Error('A valid staff record ID is required.');
+      const payload = normaliseStaffRecord(record);
+      const { data, error } = await client.from('school_staff_directory').update(payload)
+        .eq('id', id).eq('school_id', profile.school_id)
+        .select('id,school_id,profile_id,staff_id,full_name,gender,designation,department,qualification,specialisation,employment_type,phone,email,biography,photo_url,date_employed,status,show_on_portal,created_at,updated_at').maybeSingle();
+      if (error) throw error;
+      if (!data) throw new Error('No staff record was updated. Check your access or refresh the staff list.');
+      return data;
+    }
+
+    return Object.freeze({ select, insert, update, upsert, remove, auditSchoolAndClasses, auditSchoolDataCounts, auditStudentEnrolmentIntegrity, auditAssignmentIntegrity, auditStaffAndAcademicConfiguration, getStaffDirectory, createStaffDirectoryRecord, updateStaffDirectoryRecord });
   }
   global.SupabasePersistence = Object.freeze({ create });
 })(window);
