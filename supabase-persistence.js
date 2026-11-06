@@ -201,7 +201,69 @@
       };
     }
 
-    return Object.freeze({ select, insert, update, upsert, remove, auditSchoolAndClasses, auditSchoolDataCounts, auditStudentEnrolmentIntegrity, auditAssignmentIntegrity });
+
+    async function auditStaffAndAcademicConfiguration() {
+      const user = await requireAuthenticatedUser();
+      const profile = await getActiveSchoolProfile(user);
+      // Only IDs, staff identifiers and configuration metadata are fetched; no names/contact details.
+      const [staffResult, termsResult, sessionsResult, classesResult, configurationsResult] = await Promise.all([
+        client.from('school_staff_directory').select('id,school_id,profile_id,staff_id').eq('school_id', profile.school_id),
+        client.from('terms').select('id,school_id,name,term_number,is_current').eq('school_id', profile.school_id).order('term_number'),
+        client.from('academic_sessions').select('id,school_id').eq('school_id', profile.school_id),
+        client.from('classes').select('id,school_id,level,class_name').eq('school_id', profile.school_id),
+        client.from('assessment_configurations').select('id,school_id,academic_session_id,term_id,class_level,is_active').eq('school_id', profile.school_id)
+      ]);
+      for (const result of [staffResult, termsResult, sessionsResult, classesResult, configurationsResult]) {
+        if (result.error) throw result.error;
+      }
+      const staff = staffResult.data || [], terms = termsResult.data || [];
+      const sessions = sessionsResult.data || [], classes = classesResult.data || [];
+      const configurations = configurationsResult.data || [];
+
+      function duplicateCount(rows, keyFn) {
+        const seen = new Set(); let duplicates = 0;
+        rows.forEach(row => { const key = keyFn(row); if (key && seen.has(key)) duplicates++; if (key) seen.add(key); });
+        return duplicates;
+      }
+      const staffIds = staff.map(row => row.staff_id).filter(value => value != null && String(value).trim() !== '');
+      const profileIds = staff.map(row => row.profile_id).filter(Boolean);
+      const currentTerms = terms.filter(row => row.is_current === true).length;
+      const sessionIds = new Set(sessions.map(row => row.id));
+      const termIds = new Set(terms.map(row => row.id));
+      const classLevels = new Set(classes.map(row => String(row.level || row.class_name || '').trim().toLowerCase()));
+      let missingSessionReferences = 0, missingTermReferences = 0, duplicateConfigKeys = 0;
+      const configKeys = new Set();
+      configurations.forEach(row => {
+        if (!sessionIds.has(row.academic_session_id)) missingSessionReferences++;
+        if (!termIds.has(row.term_id)) missingTermReferences++;
+        const key = [row.academic_session_id, row.term_id, String(row.class_level || '').trim().toLowerCase()].join('|');
+        if (configKeys.has(key)) duplicateConfigKeys++;
+        configKeys.add(key);
+      });
+      const activeConfigurations = configurations.filter(row => row.is_active === true).length;
+      return {
+        readOnly: true, schoolId: profile.school_id,
+        staff: {
+          total: staff.length,
+          missingStaffId: staff.filter(row => !row.staff_id || !String(row.staff_id).trim()).length,
+          duplicateStaffIds: duplicateCount(staff, row => row.staff_id == null ? '' : String(row.staff_id).trim().toLowerCase()),
+          duplicateProfileLinks: duplicateCount(staff, row => row.profile_id || ''),
+          linkedProfileCount: profileIds.length
+        },
+        terms: {
+          total: terms.length, currentTermCount: currentTerms,
+          duplicateTermNumbers: duplicateCount(terms, row => row.term_number == null ? '' : String(row.term_number)),
+          termNumbers: terms.map(row => ({ termNumber: row.term_number, isCurrent: row.is_current === true }))
+        },
+        assessments: {
+          total: configurations.length, active: activeConfigurations, inactive: configurations.length - activeConfigurations,
+          missingSessionReferences, missingTermReferences, duplicateConfigurationKeys: duplicateConfigKeys,
+          sessionCount: sessions.length, termCount: terms.length, classLevelCount: classLevels.size
+        }
+      };
+    }
+
+    return Object.freeze({ select, insert, update, upsert, remove, auditSchoolAndClasses, auditSchoolDataCounts, auditStudentEnrolmentIntegrity, auditAssignmentIntegrity, auditStaffAndAcademicConfiguration });
   }
   global.SupabasePersistence = Object.freeze({ create });
 })(window);
