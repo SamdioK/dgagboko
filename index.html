@@ -10,7 +10,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="supabase-persistence.js?v=202611061425"></script>
+<script src="supabase-persistence.js?v=202611061445"></script>
 <script src="score-entry-engine.js"></script>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -7202,10 +7202,69 @@ function renderDashboard() {
   html += '<button class="btn btn-primary" onclick="showTab(\'masters\'); document.querySelectorAll(\'.tab\').forEach(function(t){t.classList.remove(\'active\'); if(t.textContent===\'Masters\')t.classList.add(\'active\');});" style="padding: 10px 20px;">Manage Subject Teachers</button></div>';
 
   if (currentUser && currentUser.type === 'admin') {
-    html += '<div class="card" style="margin-top:20px;border-left:4px solid #667eea;"><h3>Supabase Migration Readiness</h3><p style="color:#666;">Run read-only checks of the linked school, classes and school data counts. No records are changed or downloaded by the count audit.</p><button type="button" class="btn btn-primary" id="runSupabaseSchoolAuditBtn">Run Read-only School &amp; Class Audit</button><div id="supabaseSchoolAuditResult" style="margin-top:14px;"></div><hr style="margin:18px 0;"><button type="button" class="btn btn-primary" id="runSupabaseDataCountAuditBtn">Run Read-only School Data Inventory</button><div id="supabaseDataCountAuditResult" style="margin-top:14px;"></div><hr style="margin:18px 0;"><button type="button" class="btn btn-primary" id="runStudentEnrolmentIntegrityBtn">Run Student Enrolment Integrity Check</button><div id="studentEnrolmentIntegrityResult" style="margin-top:14px;"></div><hr style="margin:18px 0;"><button type="button" class="btn btn-primary" id="runAssignmentIntegrityBtn">Run Assignment Integrity Check</button><div id="assignmentIntegrityResult" style="margin-top:14px;"></div></div>';
+    html += '<div class="card" style="margin-top:20px;border-left:4px solid #667eea;"><h3>Supabase Migration Readiness</h3><p style="color:#666;">Run read-only checks of the linked school, classes and school data counts. No records are changed or downloaded by the count audit.</p><button type="button" class="btn btn-primary" id="runSupabaseSchoolAuditBtn">Run Read-only School &amp; Class Audit</button><div id="supabaseSchoolAuditResult" style="margin-top:14px;"></div><hr style="margin:18px 0;"><button type="button" class="btn btn-primary" id="runSupabaseDataCountAuditBtn">Run Read-only School Data Inventory</button><div id="supabaseDataCountAuditResult" style="margin-top:14px;"></div><hr style="margin:18px 0;"><button type="button" class="btn btn-primary" id="runStudentEnrolmentIntegrityBtn">Run Student Enrolment Integrity Check</button><div id="studentEnrolmentIntegrityResult" style="margin-top:14px;"></div><hr style="margin:18px 0;"><button type="button" class="btn btn-primary" id="runAssignmentIntegrityBtn">Run Assignment Integrity Check</button><div id="assignmentIntegrityResult" style="margin-top:14px;"></div><hr style="margin:18px 0;"><button type="button" class="btn btn-primary" id="runStaffAcademicAuditBtn">Run Staff &amp; Academic Configuration Audit</button><div id="staffAcademicAuditResult" style="margin-top:14px;"></div></div>';
   }
 
   document.getElementById('dashboardTab').innerHTML = html;
+  var staffAcademicAuditButton = document.getElementById('runStaffAcademicAuditBtn');
+  if (staffAcademicAuditButton) {
+    staffAcademicAuditButton.addEventListener('click', async function() {
+      var output = document.getElementById('staffAcademicAuditResult');
+      staffAcademicAuditButton.disabled = true;
+      staffAcademicAuditButton.textContent = 'Checking staff and academic records...';
+      output.textContent = 'Checking staff identifiers, term configuration and assessment references. No names or contact details are retrieved, and no records are changed.';
+      try {
+        if (!supabasePersistence || typeof supabasePersistence.auditStaffAndAcademicConfiguration !== 'function') {
+          throw new Error('The staff and academic audit is not available. Reload the portal after deployment.');
+        }
+        var report = await supabasePersistence.auditStaffAndAcademicConfiguration();
+        var safe = function(value) {
+          return String(value == null ? '' : value).replace(/[&<>"']/g, function(ch) {
+            return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch];
+          });
+        };
+        var rows = [
+          ['Staff records', report.staff.total],
+          ['Staff records without staff ID', report.staff.missingStaffId],
+          ['Duplicate staff IDs', report.staff.duplicateStaffIds],
+          ['Duplicate staff profile links', report.staff.duplicateProfileLinks],
+          ['Staff records linked to profiles', report.staff.linkedProfileCount],
+          ['Academic terms', report.terms.total],
+          ['Terms marked current', report.terms.currentTermCount],
+          ['Duplicate term numbers', report.terms.duplicateTermNumbers],
+          ['Assessment configurations', report.assessments.total],
+          ['Active assessment configurations', report.assessments.active],
+          ['Inactive assessment configurations', report.assessments.inactive],
+          ['Configurations with missing session references', report.assessments.missingSessionReferences],
+          ['Configurations with missing term references', report.assessments.missingTermReferences],
+          ['Duplicate session/term/class-level configurations', report.assessments.duplicateConfigurationKeys]
+        ];
+        var issueRows = rows.filter(function(item) {
+          return /without staff ID|Duplicate|missing .*references/.test(item[0]) ||
+            item[0] === 'Terms marked current';
+        });
+        var issueCount = report.staff.missingStaffId + report.staff.duplicateStaffIds +
+          report.staff.duplicateProfileLinks + report.terms.duplicateTermNumbers +
+          report.assessments.missingSessionReferences + report.assessments.missingTermReferences +
+          report.assessments.duplicateConfigurationKeys;
+        var tableRows = rows.map(function(item) {
+          var flagged = /without staff ID|Duplicate|missing .*references/.test(item[0]);
+          return '<tr><td>' + safe(item[0]) + '</td><td><strong' + (flagged && Number(item[1]) > 0 ? ' style="color:#b42318;"' : '') + '>' + safe(item[1]) + '</strong></td></tr>';
+        }).join('');
+        var termRows = report.terms.termNumbers.map(function(item) {
+          return '<tr><td>' + safe(item.termNumber) + '</td><td>' + (item.isCurrent ? 'Yes' : 'No') + '</td></tr>';
+        }).join('');
+        output.innerHTML = '<div style="background:' + (issueCount ? '#fff7e6' : '#eef8f0') + ';padding:12px;border-radius:8px;"><strong>' + (issueCount ? 'Review required: staff or academic configuration issues detected.' : 'No staff or academic reference integrity issues detected by these checks.') + '</strong><p>Only staff identifiers and configuration metadata were checked. No personal names or contact details were retrieved.</p></div><div style="overflow-x:auto;margin-top:12px;"><table><thead><tr><th>Audit item</th><th>Count</th></tr></thead><tbody>' + tableRows + '</tbody></table></div><h4 style="margin-top:14px;">Term status</h4><div style="overflow-x:auto;"><table><thead><tr><th>Term number</th><th>Current term?</th></tr></thead><tbody>' + (termRows || '<tr><td colspan="2">No terms found.</td></tr>') + '</tbody></table></div>';
+        window.lastStaffAcademicAuditReport = report;
+      } catch (auditError) {
+        output.innerHTML = '<div style="background:#fff0f0;color:#9b1c1c;padding:12px;border-radius:8px;"><strong>Staff and academic audit could not be completed.</strong><p>' + safeAuditMessage(auditError) + '</p></div>';
+      } finally {
+        staffAcademicAuditButton.disabled = false;
+        staffAcademicAuditButton.textContent = 'Run Staff &amp; Academic Configuration Audit';
+      }
+    });
+  }
+
   var assignmentIntegrityButton = document.getElementById('runAssignmentIntegrityBtn');
   if (assignmentIntegrityButton) {
     assignmentIntegrityButton.addEventListener('click', async function() {
