@@ -10,7 +10,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="supabase-persistence.js?v=202611061405"></script>
+<script src="supabase-persistence.js?v=202611061425"></script>
 <script src="score-entry-engine.js"></script>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -7202,10 +7202,62 @@ function renderDashboard() {
   html += '<button class="btn btn-primary" onclick="showTab(\'masters\'); document.querySelectorAll(\'.tab\').forEach(function(t){t.classList.remove(\'active\'); if(t.textContent===\'Masters\')t.classList.add(\'active\');});" style="padding: 10px 20px;">Manage Subject Teachers</button></div>';
 
   if (currentUser && currentUser.type === 'admin') {
-    html += '<div class="card" style="margin-top:20px;border-left:4px solid #667eea;"><h3>Supabase Migration Readiness</h3><p style="color:#666;">Run read-only checks of the linked school, classes and school data counts. No records are changed or downloaded by the count audit.</p><button type="button" class="btn btn-primary" id="runSupabaseSchoolAuditBtn">Run Read-only School &amp; Class Audit</button><div id="supabaseSchoolAuditResult" style="margin-top:14px;"></div><hr style="margin:18px 0;"><button type="button" class="btn btn-primary" id="runSupabaseDataCountAuditBtn">Run Read-only School Data Inventory</button><div id="supabaseDataCountAuditResult" style="margin-top:14px;"></div><hr style="margin:18px 0;"><button type="button" class="btn btn-primary" id="runStudentEnrolmentIntegrityBtn">Run Student Enrolment Integrity Check</button><div id="studentEnrolmentIntegrityResult" style="margin-top:14px;"></div></div>';
+    html += '<div class="card" style="margin-top:20px;border-left:4px solid #667eea;"><h3>Supabase Migration Readiness</h3><p style="color:#666;">Run read-only checks of the linked school, classes and school data counts. No records are changed or downloaded by the count audit.</p><button type="button" class="btn btn-primary" id="runSupabaseSchoolAuditBtn">Run Read-only School &amp; Class Audit</button><div id="supabaseSchoolAuditResult" style="margin-top:14px;"></div><hr style="margin:18px 0;"><button type="button" class="btn btn-primary" id="runSupabaseDataCountAuditBtn">Run Read-only School Data Inventory</button><div id="supabaseDataCountAuditResult" style="margin-top:14px;"></div><hr style="margin:18px 0;"><button type="button" class="btn btn-primary" id="runStudentEnrolmentIntegrityBtn">Run Student Enrolment Integrity Check</button><div id="studentEnrolmentIntegrityResult" style="margin-top:14px;"></div><hr style="margin:18px 0;"><button type="button" class="btn btn-primary" id="runAssignmentIntegrityBtn">Run Assignment Integrity Check</button><div id="assignmentIntegrityResult" style="margin-top:14px;"></div></div>';
   }
 
   document.getElementById('dashboardTab').innerHTML = html;
+  var assignmentIntegrityButton = document.getElementById('runAssignmentIntegrityBtn');
+  if (assignmentIntegrityButton) {
+    assignmentIntegrityButton.addEventListener('click', async function() {
+      var output = document.getElementById('assignmentIntegrityResult');
+      assignmentIntegrityButton.disabled = true;
+      assignmentIntegrityButton.textContent = 'Checking assignments...';
+      output.textContent = 'Comparing Form Master and teacher assignment identifiers with classes, subjects and academic sessions. No records will be changed.';
+      try {
+        if (!supabasePersistence || typeof supabasePersistence.auditAssignmentIntegrity !== 'function') {
+          throw new Error('The assignment integrity audit is not available. Reload the portal after deployment.');
+        }
+        var report = await supabasePersistence.auditAssignmentIntegrity();
+        var safe = function(value) {
+          return String(value == null ? '' : value).replace(/[&<>"']/g, function(ch) {
+            return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch];
+          });
+        };
+        var groups = [
+          ['Form Master assignments', report.formMasterAssignments],
+          ['Teacher/subject assignments', report.teacherSubjectAssignments]
+        ];
+        var rows = '';
+        groups.forEach(function(group) {
+          var x = group[1];
+          [
+            [group[0] + ' — total', x.total, false],
+            [group[0] + ' — missing teacher ID', x.missingTeacherIds, true],
+            [group[0] + ' — missing class reference', x.missingClassReferences, true],
+            [group[0] + ' — missing academic session', x.missingSessionReferences, true],
+            [group[0] + ' — missing subject reference', x.missingSubjectReferences, true],
+            [group[0] + ' — duplicate assignment combinations', x.duplicateAssignments, true],
+            [group[0] + ' — school ID mismatch', x.crossSchoolRows, true]
+          ].forEach(function(item) {
+            rows += '<tr><td>' + safe(item[0]) + '</td><td><strong' + (item[2] && Number(item[1]) > 0 ? ' style="color:#b42318;"' : '') + '>' + safe(item[1]) + '</strong></td></tr>';
+          });
+        });
+        var issueCount = groups.reduce(function(total, group) {
+          var x = group[1];
+          return total + x.missingTeacherIds + x.missingClassReferences + x.missingSessionReferences +
+            x.missingSubjectReferences + x.duplicateAssignments + x.crossSchoolRows;
+        }, 0);
+        output.innerHTML = '<div style="background:' + (issueCount ? '#fff7e6' : '#eef8f0') + ';padding:12px;border-radius:8px;"><strong>' + (issueCount ? 'Review required: assignment inconsistencies detected.' : 'No assignment integrity issues detected by these checks.') + '</strong><p>Reference records visible: ' + safe(report.referenceCounts.classes) + ' classes, ' + safe(report.referenceCounts.subjects) + ' subjects and ' + safe(report.referenceCounts.academicSessions) + ' academic sessions.</p><p>Only identifiers were compared. ' + safe(report.note) + '</p></div><div style="overflow-x:auto;margin-top:12px;"><table><thead><tr><th>Assignment check</th><th>Count</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+        window.lastAssignmentIntegrityReport = report;
+      } catch (auditError) {
+        output.innerHTML = '<div style="background:#fff0f0;color:#9b1c1c;padding:12px;border-radius:8px;"><strong>Assignment integrity check could not be completed.</strong><p>' + safeAuditMessage(auditError) + '</p></div>';
+      } finally {
+        assignmentIntegrityButton.disabled = false;
+        assignmentIntegrityButton.textContent = 'Run Assignment Integrity Check';
+      }
+    });
+  }
+
   var integrityButton = document.getElementById('runStudentEnrolmentIntegrityBtn');
   if (integrityButton) {
     integrityButton.addEventListener('click', async function() {
