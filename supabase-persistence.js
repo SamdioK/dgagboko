@@ -207,7 +207,7 @@
       const profile = await getActiveSchoolProfile(user);
       // Only IDs, staff identifiers and configuration metadata are fetched; no names/contact details.
       const [staffResult, termsResult, sessionsResult, classesResult, configurationsResult] = await Promise.all([
-        client.from('school_staff_directory').select('id,school_id,profile_id,staff_id').eq('school_id', profile.school_id),
+        client.from('school_staff_directory').select('id,school_id,profile_id,staff_id,gender,designation,department,qualification,specialisation,employment_type,date_employed,status,show_on_portal').eq('school_id', profile.school_id),
         client.from('terms').select('id,school_id,name,term_number,is_current').eq('school_id', profile.school_id).order('term_number'),
         client.from('academic_sessions').select('id,school_id,name,is_current').eq('school_id', profile.school_id).order('created_at'),
         client.from('classes').select('id,school_id,level,class_name').eq('school_id', profile.school_id),
@@ -227,6 +227,12 @@
       }
       const staffIds = staff.map(row => row.staff_id).filter(value => value != null && String(value).trim() !== '');
       const profileIds = staff.map(row => row.profile_id).filter(Boolean);
+      const countPresent = field => staff.filter(row => row[field] != null && String(row[field]).trim() !== '').length;
+      const distribution = field => staff.reduce((acc, row) => {
+        const value = row[field] == null || String(row[field]).trim() === '' ? '(blank)' : String(row[field]).trim();
+        acc[value] = (acc[value] || 0) + 1;
+        return acc;
+      }, {});
       const currentTerms = terms.filter(row => row.is_current === true).length;
       const targetSessions = sessions.filter(row => /2026\s*[-/]\s*2027|2026\s*\/\s*2027|2026-2027/i.test(String(row.name || '')));
       const targetSessionIds = new Set(targetSessions.map(row => row.id));
@@ -251,7 +257,20 @@
           missingStaffId: staff.filter(row => !row.staff_id || !String(row.staff_id).trim()).length,
           duplicateStaffIds: duplicateCount(staff, row => row.staff_id == null ? '' : String(row.staff_id).trim().toLowerCase()),
           duplicateProfileLinks: duplicateCount(staff, row => row.profile_id || ''),
-          linkedProfileCount: profileIds.length
+          linkedProfileCount: profileIds.length,
+          fieldCompleteness: {
+            gender: countPresent('gender'),
+            designation: countPresent('designation'),
+            department: countPresent('department'),
+            qualification: countPresent('qualification'),
+            specialisation: countPresent('specialisation'),
+            employmentType: countPresent('employment_type'),
+            dateEmployed: countPresent('date_employed'),
+            status: countPresent('status')
+          },
+          statusDistribution: distribution('status'),
+          employmentTypeDistribution: distribution('employment_type'),
+          portalVisibleCount: staff.filter(row => row.show_on_portal === true).length
         },
         sessions: {
           total: sessions.length,
