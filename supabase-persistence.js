@@ -150,7 +150,58 @@
       };
     }
 
-    return Object.freeze({ select, insert, update, upsert, remove, auditSchoolAndClasses, auditSchoolDataCounts, auditStudentEnrolmentIntegrity });
+
+    async function auditAssignmentIntegrity() {
+      const user = await requireAuthenticatedUser();
+      const profile = await getActiveSchoolProfile(user);
+      // Fetch identifiers and assignment links only. No names or contact details are read.
+      const [formMastersResult, teacherAssignmentsResult, classesResult, sessionsResult, subjectsResult] = await Promise.all([
+        client.from('form_master_assignments').select('id,school_id,teacher_id,class_id,academic_session_id').eq('school_id', profile.school_id),
+        client.from('teacher_assignments').select('id,school_id,teacher_id,class_id,subject_id,academic_session_id,is_active').eq('school_id', profile.school_id),
+        client.from('classes').select('id').eq('school_id', profile.school_id),
+        client.from('academic_sessions').select('id').eq('school_id', profile.school_id),
+        client.from('subjects').select('id').eq('school_id', profile.school_id)
+      ]);
+      for (const result of [formMastersResult, teacherAssignmentsResult, classesResult, sessionsResult, subjectsResult]) {
+        if (result.error) throw result.error;
+      }
+
+      const formMasters = formMastersResult.data || [];
+      const teacherAssignments = teacherAssignmentsResult.data || [];
+      const classIds = new Set((classesResult.data || []).map(row => row.id));
+      const sessionIds = new Set((sessionsResult.data || []).map(row => row.id));
+      const subjectIds = new Set((subjectsResult.data || []).map(row => row.id));
+
+      function inspect(rows, type) {
+        const seen = new Set();
+        let missingTeacherIds = 0, missingClassReferences = 0, missingSessionReferences = 0;
+        let missingSubjectReferences = 0, duplicateAssignments = 0, crossSchoolRows = 0;
+        rows.forEach(row => {
+          if (!row.teacher_id) missingTeacherIds++;
+          if (!classIds.has(row.class_id)) missingClassReferences++;
+          if (!sessionIds.has(row.academic_session_id)) missingSessionReferences++;
+          if (type === 'teacher' && !subjectIds.has(row.subject_id)) missingSubjectReferences++;
+          if (row.school_id !== profile.school_id) crossSchoolRows++;
+          const key = type === 'form'
+            ? [row.teacher_id, row.class_id, row.academic_session_id].join('|')
+            : [row.teacher_id, row.class_id, row.subject_id, row.academic_session_id].join('|');
+          if (seen.has(key)) duplicateAssignments++;
+          seen.add(key);
+        });
+        return { total: rows.length, missingTeacherIds, missingClassReferences,
+          missingSessionReferences, missingSubjectReferences, duplicateAssignments, crossSchoolRows };
+      }
+
+      return {
+        readOnly: true, schoolId: profile.school_id,
+        formMasterAssignments: inspect(formMasters, 'form'),
+        teacherSubjectAssignments: inspect(teacherAssignments, 'teacher'),
+        referenceCounts: { classes: classIds.size, academicSessions: sessionIds.size, subjects: subjectIds.size },
+        note: 'Teacher profile existence is not independently counted because profile SELECT access is restricted by RLS. Non-null teacher IDs and database foreign keys remain the available checks.'
+      };
+    }
+
+    return Object.freeze({ select, insert, update, upsert, remove, auditSchoolAndClasses, auditSchoolDataCounts, auditStudentEnrolmentIntegrity, auditAssignmentIntegrity });
   }
   global.SupabasePersistence = Object.freeze({ create });
 })(window);
