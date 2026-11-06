@@ -2146,7 +2146,7 @@ async function saveAllData() {
     promises.push(cloudStorage.save('activityLog', activityLog.slice(-1000)));
     promises.push(cloudStorage.save('portalNews', portalNews));
     promises.push(cloudStorage.save('schoolStaff', schoolStaff));
-    promises.push(cloudStorage.save('staffDatabase', staffDatabase));
+    // Staff Database records are persisted directly to Supabase, not browser storage.
     promises.push(cloudStorage.save('portalStaffSelections', portalStaffSelections));
     promises.push(cloudStorage.save('prefects', prefects));
     promises.push(cloudStorage.save('dutyRoster', dutyRoster));
@@ -6260,7 +6260,6 @@ function syncStaffDatabaseFromExistingRecords() {
 
 function renderStaffDatabase() {
   if (!currentUser || currentUser.type !== 'admin') return;
-  if (syncStaffDatabaseFromExistingRecords()) saveAllData();
   var editingId = '';
   var fields = [['staffId','Staff ID'],['fullName','Full Name'],['gender','Gender'],['designation','Designation / Position'],['department','Department'],['qualification','Qualification'],['specialisation','Specialisation / Subject'],['employmentType','Employment Type'],['phone','Phone'],['email','Email'],['dateEmployed','Date Employed'],['biography','Short Biography']];
   var qualificationOptions = [
@@ -6548,7 +6547,7 @@ function renderStaffDatabase() {
     var matches = staffDatabase.filter(function(record) { return fields.some(function(field) { return String(record[field[0]] || '').toLowerCase().indexOf(query) !== -1; }) || String(record.staffId || '').toLowerCase().indexOf(query) !== -1; });
     document.getElementById('staffDatabaseRows').innerHTML = matches.length ? '<div style="overflow-x:auto"><table><thead><tr><th>Photo</th><th>Staff ID</th><th>Name</th><th>Gender</th><th>Employment Type</th><th>Designation / Department</th><th>Specialisation</th><th>Status</th><th>Portal</th><th>Actions</th></tr></thead><tbody>' + matches.map(function(record) { return '<tr><td>' + (record.photo ? '<img src="' + escapeManagementText(record.photo) + '" alt="" style="width:48px;height:54px;object-fit:cover;border-radius:4px">' : '—') + '</td><td>' + escapeManagementText(record.staffId) + '</td><td>' + escapeManagementText(record.fullName) + '</td><td>' + escapeManagementText(record.gender) + '</td><td>' + escapeManagementText(record.employmentType) + '</td><td>' + escapeManagementText(record.designation) + ' / ' + escapeManagementText(record.department) + '</td><td>' + escapeManagementText(record.specialisation) + '</td><td>' + escapeManagementText(record.status) + '</td><td>' + (record.showOnPortal ? 'Yes' : 'No') + '</td><td style="white-space:nowrap"><button class="btn btn-primary staff-edit" data-id="' + escapeManagementText(record.id) + '">Edit</button> <button class="btn ' + (record.status === 'Active' ? 'btn-danger' : 'btn-success') + ' staff-toggle" data-id="' + escapeManagementText(record.id) + '">' + (record.status === 'Active' ? 'Deactivate' : 'Activate') + '</button></td></tr>'; }).join('') + '</tbody></table></div>' : '<p style="color:#999">No matching staff records.</p>';
     document.querySelectorAll('.staff-edit').forEach(function(button) { button.addEventListener('click', function() { var record = staffDatabase.find(function(item) { return String(item.id) === button.dataset.id; }); if (!record) return; editingId = String(record.id); inputIds.forEach(function(id) { document.getElementById(id).value = record[id] || ''; }); loadDepartment(record); editingQualificationLegacy = loadQualifications(record); document.getElementById('staffPhoto').value = ''; document.getElementById('staffStatus').value = record.status || 'Active'; document.getElementById('staffShowOnPortal').checked = record.showOnPortal === true; document.getElementById('saveStaffRecordBtn').textContent = 'Save Staff Changes'; document.getElementById('staffDatabaseTab').scrollIntoView({ behavior: 'smooth' }); }); });
-    document.querySelectorAll('.staff-toggle').forEach(function(button) { button.addEventListener('click', async function() { var record = staffDatabase.find(function(item) { return String(item.id) === button.dataset.id; }); if (!record) return; record.status = record.status === 'Active' ? 'Inactive' : 'Active'; await saveAllData(); renderRows(); }); });
+    document.querySelectorAll('.staff-toggle').forEach(function(button) { button.addEventListener('click', async function() { var record = staffDatabase.find(function(item) { return String(item.id) === button.dataset.id; }); if (!record) return; var nextStatus = record.status === 'Active' ? 'Inactive' : 'Active'; button.disabled = true; try { var updated = await supabasePersistence.updateStaffDirectoryRecord(String(record.id), { full_name: record.fullName, staff_id: record.staffId || null, gender: record.gender || null, designation: record.designation || null, department: record.department || null, qualification: Array.isArray(record.qualification) ? record.qualification.join('; ') : (record.qualification || null), specialisation: record.specialisation || null, employment_type: record.employmentType || null, phone: record.phone || null, email: record.email || null, biography: record.biography || null, date_employed: record.dateEmployed || null, status: nextStatus, show_on_portal: record.showOnPortal === true }); Object.assign(record, mapSupabaseStaffRecord(updated)); renderRows(); showToast('Staff status updated', 'success'); } catch (error) { showToast('Staff update failed: ' + (error.message || 'Unknown error'), 'error'); button.disabled = false; } }); });
   }
   document.getElementById('staffDatabaseSearch').addEventListener('input', renderRows);
   document.getElementById('clearStaffRecordBtn').addEventListener('click', clearForm);
@@ -6574,9 +6573,9 @@ function renderStaffDatabase() {
       return;
     }
     var file = document.getElementById('staffPhoto').files[0];
-    if (file && (!file.type || file.type.indexOf('image/') !== 0)) { showToast('Choose a valid staff photo', 'error'); return; }
-    var saveRecord = async function(photo) {
-      var record = staffDatabase.find(function(item) { return String(item.id) === editingId; }) || { id: 'staff-manual-' + Date.now(), sourceKey: 'manual-' + Date.now() };
+    if (file) { showToast('Staff photo upload will be enabled after the Supabase Storage policy is verified. Save the record without a new photo for now.', 'error'); return; }
+    var saveRecord = async function() {
+      var record = staffDatabase.find(function(item) { return String(item.id) === editingId; }) || {};
       inputIds.forEach(function(id) { record[id] = document.getElementById(id).value.trim(); });
       if (selectedDepartment === '12. Others') {
         record.department = '12. Others — ' + customDepartment;
@@ -6600,13 +6599,59 @@ function renderStaffDatabase() {
         delete record.qualificationLegacy;
       }
       record.status = document.getElementById('staffStatus').value; record.showOnPortal = document.getElementById('staffShowOnPortal').checked;
-      if (photo) record.photo = photo;
-      if (!staffDatabase.some(function(item) { return String(item.id) === String(record.id); })) staffDatabase.push(record);
-      await saveAllData(); logActivity(editingId ? 'Updated staff database record' : 'Added staff database record', record.fullName); showToast('Staff record saved', 'success'); renderStaffDatabase();
+      var payload = {
+        staff_id: record.staffId || null, full_name: record.fullName, gender: record.gender || null,
+        designation: record.designation || null, department: record.department || null,
+        qualification: Array.isArray(record.qualification) ? record.qualification.join('; ') : (record.qualification || null),
+        specialisation: record.specialisation || null, employment_type: record.employmentType || null,
+        phone: record.phone || null, email: record.email || null, biography: record.biography || null,
+        date_employed: record.dateEmployed || null, status: record.status, show_on_portal: record.showOnPortal
+      };
+      var saveButton = document.getElementById('saveStaffRecordBtn');
+      saveButton.disabled = true;
+      try {
+        var saved = editingId
+          ? await supabasePersistence.updateStaffDirectoryRecord(editingId, payload)
+          : await supabasePersistence.createStaffDirectoryRecord(payload);
+        var mapped = mapSupabaseStaffRecord(saved);
+        var existingIndex = staffDatabase.findIndex(function(item) { return String(item.id) === String(mapped.id); });
+        if (existingIndex >= 0) staffDatabase[existingIndex] = mapped; else staffDatabase.push(mapped);
+        logActivity(editingId ? 'Updated staff database record' : 'Added staff database record', mapped.fullName);
+        showToast('Staff record saved to Supabase', 'success');
+        renderStaffDatabase();
+      } catch (error) {
+        showToast('Staff record was not saved: ' + (error.message || 'Unknown error'), 'error');
+        saveButton.disabled = false;
+      }
     };
-    if (file) { var reader = new FileReader(); reader.onload = function(event) { saveRecord(event.target.result); }; reader.onerror = function() { showToast('Could not read staff photo', 'error'); }; reader.readAsDataURL(file); } else saveRecord(null);
+    saveRecord();
   });
-  renderRows();
+  async function loadStaffDirectoryFromSupabase() {
+    var container = document.getElementById('staffDatabaseRows');
+    container.innerHTML = '<p style="color:#64748b">Loading staff records from Supabase…</p>';
+    try {
+      if (!window.supabasePersistence || typeof supabasePersistence.getStaffDirectory !== 'function') throw new Error('Supabase staff directory service is not initialised. Please sign in again.');
+      var rows = await supabasePersistence.getStaffDirectory();
+      staffDatabase = rows.map(mapSupabaseStaffRecord);
+      renderRows();
+    } catch (error) {
+      container.innerHTML = '<p style="color:#b91c1c">Unable to load the Supabase staff directory: ' + escapeManagementText(error.message || 'Unknown error') + '</p>';
+      showToast('Staff directory could not be loaded from Supabase', 'error');
+    }
+  }
+  function mapSupabaseStaffRecord(row) {
+    var qualification = row.qualification || '';
+    var qualifications = Array.isArray(qualification) ? qualification : String(qualification).split(';').map(function(value) { return value.trim(); }).filter(Boolean);
+    return {
+      id: row.id, staffId: row.staff_id || '', fullName: row.full_name || '', gender: row.gender || '',
+      designation: row.designation || '', department: row.department || '', qualification: qualifications,
+      specialisation: row.specialisation || '', employmentType: row.employment_type || '',
+      phone: row.phone || '', email: row.email || '', dateEmployed: row.date_employed || '',
+      biography: row.biography || '', status: row.status || 'Active', showOnPortal: row.show_on_portal === true,
+      photo: row.photo_url || '', photoUrl: row.photo_url || '', profileId: row.profile_id || '', _supabase: true
+    };
+  }
+  loadStaffDirectoryFromSupabase();
 }
 
 // ===================== PUBLIC PORTAL + PORTAL CONTENT =====================
